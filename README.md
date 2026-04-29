@@ -10,25 +10,42 @@ The API should stay simple enough for application code to use without learning l
 
 See [Design Philosophy](docs/DESIGN_PHILOSOPHY.md) for the broader project context and design constraints.
 
-## Simple Session API
+## Usage
 
-Prefer these methods in application code:
+Create a session with an explicit backend, browse and advertise when the backend supports those roles, then join discovered peers.
 
-- `startBrowsing()` / `stopBrowsing()`
-- `startAdvertising()` / `stopAdvertising()`
-- `join(_:)` for a discovered peer
-- `invite(_:context:timeout:)` only when invitation semantics matter
-- `localPeer()`
-- `connectedPeers()`
-- `send(_:to:mode:)` for one peer or many peers
-- `openStream(named:to:)`
-- `sendResource(_:to:)`
+```swift
+import NIOCore
+import PeerConnectivity
+import PeerConnectivityMultipeer
 
-`join(_:)` is the primary connection action. It uses the peer's discovered endpoints for direct-connect backends and invitation handling for nearby-session backends.
+let session = PeerConnectivitySession.multipeer(
+    serviceType: "peer-link",
+    displayName: "Device A"
+)
 
-`startBrowsing()` and `startAdvertising()` require a backend that can control those roles explicitly. If a backend cannot separate discovery roles, the method fails instead of silently starting more behavior than requested. Use `start()` when the application intentionally wants the backend's complete configured lifecycle.
+try await session.require([.nearbyDiscovery, .messageSend])
+try await session.startBrowsing()
+try await session.startAdvertising()
 
-The lower-level `connect(to:)` and `openChannel(to:protocol:)` methods remain available for expert backends and direct libp2p use.
+for await event in await session.events {
+    switch event {
+    case .peerDiscovered(let peer, _):
+        let connectedPeer = try await session.join(peer)
+        var message = ByteBuffer()
+        message.writeString("hello")
+        try await session.send(message, to: connectedPeer)
+    case .messageReceived(let bytes, let peer):
+        handle(bytes, from: peer)
+    default:
+        break
+    }
+}
+```
+
+Use `join(_:)` for discovered peers. It uses endpoints for direct-connect backends and invitations for nearby-session backends. Use `connect(to:)`, `invite(_:context:timeout:)`, and `openChannel(to:protocol:)` when backend-specific behavior is intentional.
+
+`startBrowsing()` and `startAdvertising()` fail when the backend cannot control those roles separately. Use `start()` when the application intentionally wants the backend's complete configured lifecycle.
 
 ## Backends
 
