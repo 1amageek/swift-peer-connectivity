@@ -115,6 +115,19 @@ struct PeerConnectivitySessionTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func advertisingFailsWhenBackendCannotControlDiscoverySeparately() async throws {
+        let backend = FakePeerConnectivityBackend(capabilities: [.nearbyDiscovery])
+        let session = PeerConnectivitySession(backend: backend)
+
+        do {
+            try await session.startAdvertising()
+            Issue.record("startAdvertising unexpectedly succeeded")
+        } catch let error as PeerConnectivityError {
+            #expect(error == .unsupportedOperation("startAdvertising"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func shutdownAfterBrowsingOnlyForwardsToBackend() async throws {
         let backend = FakeDiscoveryControllingBackend()
         let session = PeerConnectivitySession(backend: backend)
@@ -124,6 +137,59 @@ struct PeerConnectivitySessionTests {
 
         #expect(backend.startBrowsingCount() == 1)
         #expect(backend.shutdownCount() == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func shutdownAfterAdvertisingOnlyForwardsToBackend() async throws {
+        let backend = FakeDiscoveryControllingBackend()
+        let session = PeerConnectivitySession(backend: backend)
+
+        try await session.startAdvertising()
+        try await session.shutdown()
+
+        #expect(backend.startAdvertisingCount() == 1)
+        #expect(backend.shutdownCount() == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func stopBrowsingPreventsShutdownFromForwardingToBackend() async throws {
+        let backend = FakeDiscoveryControllingBackend()
+        let session = PeerConnectivitySession(backend: backend)
+
+        try await session.startBrowsing()
+        await session.stopBrowsing()
+        try await session.shutdown()
+
+        #expect(backend.startBrowsingCount() == 1)
+        #expect(backend.stopBrowsingCount() == 1)
+        #expect(backend.shutdownCount() == 0)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func readmeStyleUsageFlowJoinsDiscoveredPeerAndSendsMessage() async throws {
+        let discoveredPeer = PeerConnectivityPeer(id: "peer-a", displayName: "Peer A")
+        let backend = FakeUsageBackend(discoveredPeer: discoveredPeer)
+        let session = PeerConnectivitySession(backend: backend)
+        var iterator = session.events.makeAsyncIterator()
+
+        try session.require([.nearbyDiscovery, .messageSend])
+        try await session.startBrowsing()
+        try await session.startAdvertising()
+
+        guard case .peerDiscovered(let peer, _)? = await iterator.next() else {
+            Issue.record("expected peerDiscovered event")
+            return
+        }
+
+        let connectedPeer = try await session.join(peer)
+        var message = ByteBuffer()
+        message.writeString("hello")
+        try await session.send(message, to: connectedPeer)
+
+        #expect(backend.startBrowsingCount() == 1)
+        #expect(backend.startAdvertisingCount() == 1)
+        #expect(backend.joinedPeerIDs() == ["peer-a"])
+        #expect(backend.sentPeerIDs() == ["peer-a"])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -140,6 +206,49 @@ struct PeerConnectivitySessionTests {
 
         #expect(joinedPeer.id == "fake")
         #expect(backend.connectedEndpoints() == [.native("peer-a")])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func joinPrefersBackendJoinOverEndpointDialing() async throws {
+        let backend = FakeJoiningBackend()
+        let session = PeerConnectivitySession(backend: backend)
+        let peer = PeerConnectivityPeer(
+            id: "peer-a",
+            displayName: "Peer A",
+            endpoints: [.native("peer-a")]
+        )
+
+        let joinedPeer = try await session.join(peer)
+
+        #expect(joinedPeer.id == "peer-a")
+        #expect(backend.joinedPeerIDs() == ["peer-a"])
+        #expect(backend.connectedEndpoints().isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func joinUsesInvitationWhenPeerHasNoEndpoint() async throws {
+        let backend = FakeInvitationBackend()
+        let session = PeerConnectivitySession(backend: backend)
+        let peer = PeerConnectivityPeer(id: "peer-a", displayName: "Peer A")
+
+        let joinedPeer = try await session.join(peer)
+
+        #expect(joinedPeer == peer)
+        #expect(backend.invitedPeerIDs() == ["peer-a"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func joinFailsWhenPeerHasNoEndpointAndBackendCannotInvite() async throws {
+        let backend = FakePeerConnectivityBackend(capabilities: [.messageSend])
+        let session = PeerConnectivitySession(backend: backend)
+        let peer = PeerConnectivityPeer(id: "peer-a", displayName: "Peer A")
+
+        do {
+            _ = try await session.join(peer)
+            Issue.record("join unexpectedly succeeded")
+        } catch let error as PeerConnectivityError {
+            #expect(error == .unsupportedOperation("join"))
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -487,6 +596,167 @@ private final class FakePeerConnectivityBackend: PeerConnectivityBackend, PeerCo
     func sendResource(_ resource: PeerResource, to peer: PeerConnectivityPeer) async throws {}
 }
 
+private final class FakeJoiningBackend: PeerConnectivityBackend, PeerConnectivityJoining, Sendable {
+    let capabilities: PeerConnectivityCapabilities = [.messageSend]
+    private let broadcaster = PeerConnectivityEventBroadcaster<PeerConnectivityEvent>()
+    private let joinedPeers = Mutex<[String]>([])
+    private let connected = Mutex<[PeerConnectivityEndpoint]>([])
+
+    var events: AsyncStream<PeerConnectivityEvent> {
+        broadcaster.subscribe()
+    }
+
+    func joinedPeerIDs() -> [String] {
+        joinedPeers.withLock { $0 }
+    }
+
+    func connectedEndpoints() -> [PeerConnectivityEndpoint] {
+        connected.withLock { $0 }
+    }
+
+    func start() async throws {}
+    func shutdown() async throws {
+        broadcaster.shutdown()
+    }
+
+    func join(_ peer: PeerConnectivityPeer) async throws -> PeerConnectivityPeer {
+        joinedPeers.withLock { $0.append(peer.id) }
+        return peer
+    }
+
+    func connect(to endpoint: PeerConnectivityEndpoint) async throws -> PeerConnectivityPeer {
+        connected.withLock { $0.append(endpoint) }
+        return PeerConnectivityPeer(id: "connected", displayName: "Connected")
+    }
+
+    func disconnect(from peer: PeerConnectivityPeer) async throws {}
+    func send(_ bytes: ByteBuffer, to peer: PeerConnectivityPeer, mode: PeerSendMode) async throws {}
+
+    func openChannel(to peer: PeerConnectivityPeer, protocol protocolID: String) async throws -> any PeerConnectivityChannel {
+        FakePeerConnectivityChannel(peer: peer, protocolID: protocolID)
+    }
+
+    func sendResource(_ resource: PeerResource, to peer: PeerConnectivityPeer) async throws {}
+}
+
+private final class FakeInvitationBackend: PeerConnectivityBackend, PeerConnectivityInvitationHandling, Sendable {
+    let capabilities: PeerConnectivityCapabilities = [.invitation]
+    private let broadcaster = PeerConnectivityEventBroadcaster<PeerConnectivityEvent>()
+    private let invitedPeers = Mutex<[String]>([])
+
+    var events: AsyncStream<PeerConnectivityEvent> {
+        broadcaster.subscribe()
+    }
+
+    func invitedPeerIDs() -> [String] {
+        invitedPeers.withLock { $0 }
+    }
+
+    func start() async throws {}
+    func shutdown() async throws {
+        broadcaster.shutdown()
+    }
+
+    func invite(_ peer: PeerConnectivityPeer, context: ByteBuffer?, timeout: Duration) async throws {
+        invitedPeers.withLock { $0.append(peer.id) }
+    }
+
+    func connect(to endpoint: PeerConnectivityEndpoint) async throws -> PeerConnectivityPeer {
+        throw PeerConnectivityError.unsupportedEndpoint(endpoint)
+    }
+
+    func disconnect(from peer: PeerConnectivityPeer) async throws {}
+    func send(_ bytes: ByteBuffer, to peer: PeerConnectivityPeer, mode: PeerSendMode) async throws {}
+
+    func openChannel(to peer: PeerConnectivityPeer, protocol protocolID: String) async throws -> any PeerConnectivityChannel {
+        throw PeerConnectivityError.channelUnavailable
+    }
+
+    func sendResource(_ resource: PeerResource, to peer: PeerConnectivityPeer) async throws {}
+}
+
+private final class FakeUsageBackend:
+    PeerConnectivityBackend,
+    PeerConnectivityDiscoveryControlling,
+    PeerConnectivityJoining,
+    Sendable
+{
+    let capabilities: PeerConnectivityCapabilities = [.nearbyDiscovery, .messageSend]
+    private let broadcaster = PeerConnectivityEventBroadcaster<PeerConnectivityEvent>()
+    private let discoveredPeer: PeerConnectivityPeer
+    private let state = Mutex(UsageState())
+
+    private struct UsageState: Sendable {
+        var startBrowsing = 0
+        var startAdvertising = 0
+        var joinedPeers: [String] = []
+        var sentPeers: [String] = []
+    }
+
+    var events: AsyncStream<PeerConnectivityEvent> {
+        broadcaster.subscribe()
+    }
+
+    init(discoveredPeer: PeerConnectivityPeer) {
+        self.discoveredPeer = discoveredPeer
+    }
+
+    func startBrowsingCount() -> Int {
+        state.withLock { $0.startBrowsing }
+    }
+
+    func startAdvertisingCount() -> Int {
+        state.withLock { $0.startAdvertising }
+    }
+
+    func joinedPeerIDs() -> [String] {
+        state.withLock { $0.joinedPeers }
+    }
+
+    func sentPeerIDs() -> [String] {
+        state.withLock { $0.sentPeers }
+    }
+
+    func start() async throws {}
+    func shutdown() async throws {
+        broadcaster.shutdown()
+    }
+
+    func startBrowsing() async throws {
+        state.withLock { $0.startBrowsing += 1 }
+        broadcaster.emit(.peerDiscovered(discoveredPeer, endpoints: discoveredPeer.endpoints))
+    }
+
+    func stopBrowsing() async {}
+
+    func startAdvertising() async throws {
+        state.withLock { $0.startAdvertising += 1 }
+    }
+
+    func stopAdvertising() async {}
+
+    func join(_ peer: PeerConnectivityPeer) async throws -> PeerConnectivityPeer {
+        state.withLock { $0.joinedPeers.append(peer.id) }
+        return peer
+    }
+
+    func connect(to endpoint: PeerConnectivityEndpoint) async throws -> PeerConnectivityPeer {
+        throw PeerConnectivityError.unsupportedEndpoint(endpoint)
+    }
+
+    func disconnect(from peer: PeerConnectivityPeer) async throws {}
+
+    func send(_ bytes: ByteBuffer, to peer: PeerConnectivityPeer, mode: PeerSendMode) async throws {
+        state.withLock { $0.sentPeers.append(peer.id) }
+    }
+
+    func openChannel(to peer: PeerConnectivityPeer, protocol protocolID: String) async throws -> any PeerConnectivityChannel {
+        FakePeerConnectivityChannel(peer: peer, protocolID: protocolID)
+    }
+
+    func sendResource(_ resource: PeerResource, to peer: PeerConnectivityPeer) async throws {}
+}
+
 private final class FakeDiscoveryControllingBackend: PeerConnectivityBackend, PeerConnectivityDiscoveryControlling, Sendable {
     let capabilities: PeerConnectivityCapabilities = [.nearbyDiscovery]
     private let broadcaster = PeerConnectivityEventBroadcaster<PeerConnectivityEvent>()
@@ -506,6 +776,14 @@ private final class FakeDiscoveryControllingBackend: PeerConnectivityBackend, Pe
 
     func startBrowsingCount() -> Int {
         counters.withLock { $0.startBrowsing }
+    }
+
+    func stopBrowsingCount() -> Int {
+        counters.withLock { $0.stopBrowsing }
+    }
+
+    func startAdvertisingCount() -> Int {
+        counters.withLock { $0.startAdvertising }
     }
 
     func shutdownCount() -> Int {

@@ -162,6 +162,99 @@ struct NetworkTCPTransportTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func dialRejectsUnsupportedAddress() async throws {
+        #if canImport(Network)
+        let transport = NetworkTCPTransport()
+
+        do {
+            _ = try await transport.dial(try Multiaddr("/ip4/127.0.0.1/udp/4001"))
+            Issue.record("dial unexpectedly accepted a non-TCP address")
+        } catch let error as TransportError {
+            if case .unsupportedAddress = error {
+                #expect(Bool(true))
+            } else {
+                Issue.record("expected unsupportedAddress, got \(error)")
+            }
+        }
+        #else
+        #expect(Bool(true))
+        #endif
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func listenRejectsUnsupportedAddress() async throws {
+        #if canImport(Network)
+        let transport = NetworkTCPTransport()
+
+        do {
+            _ = try await transport.listen(try Multiaddr("/ip4/127.0.0.1/udp/4001"))
+            Issue.record("listen unexpectedly accepted a non-TCP address")
+        } catch let error as TransportError {
+            if case .unsupportedAddress = error {
+                #expect(Bool(true))
+            } else {
+                Issue.record("expected unsupportedAddress, got \(error)")
+            }
+        }
+        #else
+        #expect(Bool(true))
+        #endif
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func writeAfterCloseFails() async throws {
+        #if canImport(Network)
+        let transport = NetworkTCPTransport()
+        let listener = try await transport.listen(Multiaddr.tcp(host: "127.0.0.1", port: 0))
+        let connection = try await transport.dial(listener.localAddress)
+        let accepted = try await listener.accept()
+
+        try await connection.close()
+
+        var outbound = ByteBuffer()
+        outbound.writeString("after-close")
+        do {
+            try await connection.write(outbound)
+            Issue.record("write unexpectedly succeeded after close")
+        } catch let error as TransportError {
+            if case .connectionClosed = error {
+                #expect(Bool(true))
+            } else {
+                Issue.record("expected connectionClosed, got \(error)")
+            }
+        }
+
+        try await accepted.close()
+        try await listener.close()
+        #else
+        #expect(Bool(true))
+        #endif
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func acceptAfterCloseFails() async throws {
+        #if canImport(Network)
+        let transport = NetworkTCPTransport()
+        let listener = try await transport.listen(Multiaddr.tcp(host: "127.0.0.1", port: 0))
+
+        try await listener.close()
+
+        do {
+            _ = try await listener.accept()
+            Issue.record("accept unexpectedly succeeded after close")
+        } catch let error as TransportError {
+            if case .listenerClosed = error {
+                #expect(Bool(true))
+            } else {
+                Issue.record("expected listenerClosed, got \(error)")
+            }
+        }
+        #else
+        #expect(Bool(true))
+        #endif
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func pendingAcceptFailsWhenListenerCloses() async throws {
         #if canImport(Network)
         let transport = NetworkTCPTransport()
