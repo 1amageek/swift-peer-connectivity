@@ -4,23 +4,11 @@
 
 The primary API follows the shape of Multipeer Connectivity: browse, advertise, invite, then send messages, streams, or resources. Backend details such as libp2p transports, multiaddrs, and wire compatibility remain available, but they are not the first thing app code needs to learn.
 
-## Design Philosophy
+## Goals
 
-`PeerConnectivity` exists to support a world where Robots can communicate directly with each other over peer-to-peer networks. The immediate stepping stone is a mesh of Swift Agents, and the broader Robot development environment is being built through `unconscious`. This package owns one communication layer in that larger system.
+The API should stay simple enough for application code to use without learning libp2p first. Expert details remain available through explicit backends and capabilities, but the default mental model is discovery, join, send, stream, and resource transfer.
 
-```mermaid
-flowchart LR
-    U["unconscious"] --> R["Robot development"]
-    S["Swift Agent mesh"] --> R
-    P["PeerConnectivity"] --> S
-    P --> R
-    L["swift-libp2p"] --> P
-    A["Apple networking frameworks"] --> P
-```
-
-The API should stay simple enough for application and Robot code to use without learning libp2p first. Expert details remain available through explicit backends and capabilities, but the default mental model is discovery, join, send, stream, and resource transfer.
-
-See [Design Philosophy](docs/DESIGN_PHILOSOPHY.md) for the full intent and design constraints.
+See [Design Philosophy](docs/DESIGN_PHILOSOPHY.md) for the broader project context and design constraints.
 
 ## Simple Session API
 
@@ -76,7 +64,7 @@ flowchart TD
     Loopback --> LibP2P["libp2p E2E tests"]
     Transport --> RealDevices["Two-device local network tests"]
     LibP2P --> RealDevices
-    RealDevices --> MixedMesh["Apple / Linux / Robot mesh"]
+    RealDevices --> MixedMesh["Apple / Linux mesh"]
 ```
 
 Two-device local network tests are still required before production confidence, but they are a later layer. They should not replace loopback tests.
