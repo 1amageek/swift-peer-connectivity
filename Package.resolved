@@ -52,7 +52,7 @@
       "location" : "https://github.com/1amageek/swift-libp2p.git",
       "state" : {
         "branch" : "main",
-        "revision" : "a416fec7d42809c5d9148171f4bbcb7456c3db51"
+        "revision" : "38c7bea7c5f3ae0a40dc8f66a3cbd8fc8f9c7036"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-mDNS.git",
       "state" : {
-        "revision" : "c74850e3c1cbbf9ec6591e95d091f4eb5ea7d5af",
-        "version" : "1.1.0"
+        "revision" : "6cfcba8861c480433c43a6429b502e9216d394a5",
+        "version" : "1.1.1"
       }
     },
     {
@@ -105,8 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-quic.git",
       "state" : {
-        "revision" : "4da47344ed2d5e1eeb347e5caf0ab5abf176642f",
-        "version" : "1.1.0"
+        "revision" : "3ea690db3fdd24a9b1e0498f59e0135e73761cd0",
+        "version" : "1.1.1"
       }
     },
     {
@@ -114,8 +114,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-SWIM.git",
       "state" : {
-        "revision" : "6c4fa8ab80ff980bc819e897889f5bcc00fd5ec7",
-        "version" : "1.1.0"
+        "revision" : "89025aeccaa97a3b4eed0437b1bee4fd34608574",
+        "version" : "1.1.1"
       }
     },
     {
@@ -141,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-webrtc.git",
       "state" : {
-        "revision" : "32ddcf771409c4d791aef570c9f0a754fa2fae62",
-        "version" : "1.1.0"
+        "revision" : "68e4d41e98a707e98321d07eb69259dc42389e4b",
+        "version" : "1.1.1"
       }
     }
   ],
