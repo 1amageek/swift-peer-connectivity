@@ -1,5 +1,5 @@
 {
-  "originHash" : "c42310c3b6710f21afafda0a436abadf4245d23d0394682e237930708f249443",
+  "originHash" : "c9345c486132b5d635170de263a3d37470b53754fee82fe201989815a4f102a9",
   "pins" : [
     {
       "identity" : "swift-asn1",
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-libp2p.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "38c7bea7c5f3ae0a40dc8f66a3cbd8fc8f9c7036"
+        "revision" : "38c7bea7c5f3ae0a40dc8f66a3cbd8fc8f9c7036",
+        "version" : "0.1.2"
       }
     },
     {
