@@ -140,9 +140,7 @@ public actor MultipeerConnectivityBackend:
         to peer: PeerConnectivityPeer,
         mode: PeerSendMode
     ) async throws {
-        guard let target = delegate.peer(withID: peer.id) else {
-            throw PeerConnectivityError.peerIdentityRequired
-        }
+        let target = try connectedPeerID(for: peer)
         let mcMode: MCSessionSendDataMode = mode == .reliable ? .reliable : .unreliable
         try session.send(Data(bytes.readableBytesView), toPeers: [target], with: mcMode)
     }
@@ -151,9 +149,7 @@ public actor MultipeerConnectivityBackend:
         to peer: PeerConnectivityPeer,
         protocol protocolID: String
     ) async throws -> any PeerConnectivityChannel {
-        guard let target = delegate.peer(withID: peer.id) else {
-            throw PeerConnectivityError.peerIdentityRequired
-        }
+        let target = try connectedPeerID(for: peer)
         let stream = try session.startStream(withName: protocolID, toPeer: target)
         return MultipeerConnectivityChannel(
             peer: peer,
@@ -161,6 +157,22 @@ public actor MultipeerConnectivityBackend:
             input: nil,
             output: stream
         )
+    }
+
+    /// Resolve a `PeerConnectivityPeer` to the `MCPeerID` instance that is
+    /// currently in `session.connectedPeers`.
+    ///
+    /// `MCPeerID` uses an internal UUID for equality; instances obtained from
+    /// `foundPeer` and from `didReceiveInvitation` are not equal even when they
+    /// represent the same logical peer. Multipeer's `connectedPeers` retains
+    /// only the instance from the actual handshake, so we have to ask the
+    /// session itself, by `displayName`, instead of trusting whatever instance
+    /// our delegate happens to have cached.
+    private func connectedPeerID(for peer: PeerConnectivityPeer) throws -> MCPeerID {
+        if let match = session.connectedPeers.first(where: { $0.displayName == peer.displayName }) {
+            return match
+        }
+        throw PeerConnectivityError.peerIdentityRequired
     }
 
     public func sendResource(_ resource: PeerResource, to peer: PeerConnectivityPeer) async throws {
