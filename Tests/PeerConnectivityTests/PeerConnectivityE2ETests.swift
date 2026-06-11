@@ -42,6 +42,37 @@ struct PeerConnectivityE2ETests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func libp2pLargeMessageSendE2E() async throws {
+        let hub = MemoryHub()
+        let serverAddress = Multiaddr.memory(id: "peer-connectivity-large-message-e2e")
+        let server = makeMemoryNode(hub: hub, listenAddress: serverAddress)
+        let client = makeMemoryNode(hub: hub)
+        let serverSession = PeerConnectivitySession.libp2p(node: server)
+        let clientSession = PeerConnectivitySession.libp2p(node: client)
+        var serverEvents = serverSession.events.makeAsyncIterator()
+
+        try await serverSession.start()
+        try await clientSession.start()
+
+        let serverPeer = try await clientSession.connect(to: .libp2p(serverAddress.description))
+        // 1 MB payload exceeds the Yamux default window (256 KB), forcing the
+        // muxer to fragment the message across multiple frames. The receiver must
+        // reassemble all fragments instead of delivering only the first read().
+        let payload = (0..<(1024 * 1024)).map { UInt8(truncatingIfNeeded: $0) }
+        var message = ByteBuffer()
+        message.writeBytes(payload)
+        try await clientSession.send(message, to: serverPeer)
+
+        let received = try await nextMessageReceived(from: &serverEvents)
+        #expect(received.readableBytes == payload.count)
+        #expect(Array(received.readableBytesView) == payload)
+
+        try await clientSession.shutdown()
+        try await serverSession.shutdown()
+        hub.reset()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func libp2pNamedStreamE2E() async throws {
         let hub = MemoryHub()
         let protocolID = "/peer-connectivity/e2e/echo/1.0.0"

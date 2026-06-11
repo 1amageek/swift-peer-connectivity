@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import NIOCore
 import P2P
 import P2PCore
@@ -6,7 +7,22 @@ import P2PDiscovery
 import P2PMux
 import PeerConnectivity
 
+/// A `PeerConnectivityBackend` implementation backed by a libp2p `Node`.
+///
+/// - Important: This backend takes exclusive ownership of `node.events`.
+///   `Node` follows the single-consumer `EventEmitting` pattern, so no other
+///   component may consume the node's event stream while this backend is in use.
 public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnectivityJoining, PeerConnectivityStateProviding {
+    /// Maximum number of bytes accumulated for a single inbound message.
+    ///
+    /// Yamux fragments writes into window-sized frames (256 KB by default), so an
+    /// inbound message must be reassembled by reading until end-of-stream. This cap
+    /// bounds memory usage during reassembly; oversized messages fail with
+    /// `PeerConnectivityError.messageTooLarge`.
+    private static let maxInboundMessageBytes = 16 * 1024 * 1024
+
+    private static let logger = Logger(label: "swift-peer-connectivity.libp2p")
+
     public let capabilities: PeerConnectivityCapabilities
     public nonisolated var events: AsyncStream<PeerConnectivityEvent> {
         eventBroadcaster.subscribe()
@@ -38,15 +54,24 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
             await Self.handleResourceStream(context: context, eventBroadcaster: eventBroadcaster)
         }
 
-        tasks.append(Task { [node, eventBroadcaster] in
-            for await event in node.events {
+        // Capture the stream synchronously before spawning the task. `node.events`
+        // is backed by a single-consumer EventChannel that drops events emitted
+        // before its stream getter is first accessed; deferring the access to the
+        // task body would race with `node.start()` and lose early events.
+        let nodeEvents = node.events
+        tasks.append(Task { [eventBroadcaster] in
+            for await event in nodeEvents {
                 Self.emit(nodeEvent: event, eventBroadcaster: eventBroadcaster)
             }
         })
 
         if let discovery = node.configuration.discovery {
+            // Subscribe synchronously before spawning the task for the same reason
+            // as `node.events` above: observations emitted between `node.start()`
+            // and the task body running would otherwise be lost.
+            let observations = discovery.observations
             tasks.append(Task { [eventBroadcaster] in
-                for await observation in discovery.observations {
+                for await observation in observations {
                     let endpoints = observation.hints.map { address in
                         PeerConnectivityEndpoint.libp2p(address.description)
                     }
@@ -64,18 +89,28 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         do {
             try await node.start()
         } catch {
+            // Roll back the partial start: cancel the monitoring tasks spawned above
+            // and finish the event stream so subscribers of a backend that never
+            // started do not hang on `for await`.
+            for task in tasks {
+                task.cancel()
+            }
+            tasks.removeAll()
             eventBroadcaster.emit(.error(error))
+            eventBroadcaster.shutdown()
             throw error
         }
     }
 
     public func shutdown() async throws {
+        // Finish the event stream even when node shutdown throws, so subscribers
+        // iterating `events` always terminate.
+        defer { eventBroadcaster.shutdown() }
         for task in tasks {
             task.cancel()
         }
         tasks.removeAll()
         try await node.shutdown()
-        eventBroadcaster.shutdown()
     }
 
     public func connect(to endpoint: PeerConnectivityEndpoint) async throws -> PeerConnectivityPeer {
@@ -122,8 +157,15 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
     ) async throws {
         let peerID = try Self.peerID(from: peer)
         let stream = try await node.newStream(to: peerID, protocol: messageProtocolID)
-        try await stream.write(bytes)
-        try await stream.closeWrite()
+        do {
+            try await stream.write(bytes)
+        } catch {
+            await Self.resetReportingFailure(stream, label: "outbound message stream")
+            throw error
+        }
+        // Full close (not just closeWrite) so the muxer releases its stream entry
+        // on our side; the remote releases its entry when it observes the FIN.
+        try await stream.close()
     }
 
     public func openChannel(
@@ -139,7 +181,15 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         let peerID = try Self.peerID(from: peer)
 
         let stream = try await node.newStream(to: peerID, protocol: resourceProtocolID)
-        try await Self.writeResource(resource, to: stream)
+        do {
+            try await Self.writeResource(resource, to: stream)
+        } catch {
+            await Self.resetReportingFailure(stream, label: "outbound resource stream")
+            throw error
+        }
+        // Full close (not just closeWrite) so the muxer releases its stream entry
+        // on our side; the remote releases its entry when it observes the FIN.
+        try await stream.close()
     }
 
     private static func emit(
@@ -178,13 +228,49 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         eventBroadcaster: PeerConnectivityEventBroadcaster<PeerConnectivityEvent>
     ) async {
         do {
-            let bytes = try await context.stream.read()
+            let bytes = try await readMessage(from: context.stream)
             eventBroadcaster.emit(.messageReceived(
                 bytes,
                 from: PeerConnectivityPeer(peerID: context.remotePeer)
             ))
         } catch {
             eventBroadcaster.emit(.error(error))
+        }
+        // Always release the stream so the muxer can drop its stream entry.
+        // `defer` cannot await, so the close runs after the do/catch instead.
+        await closeReportingFailure(context.stream, label: "inbound message stream")
+    }
+
+    /// Reads a complete message by accumulating chunks until end-of-stream.
+    ///
+    /// Yamux fragments writes into window-sized frames (256 KB by default), so a
+    /// single `read()` may return only the first fragment of a larger message.
+    private static func readMessage(
+        from stream: MuxedStream,
+        maxBytes: Int = maxInboundMessageBytes
+    ) async throws -> ByteBuffer {
+        var output = ByteBuffer()
+        while true {
+            var chunk: ByteBuffer
+            do {
+                chunk = try await stream.read()
+            } catch {
+                // `MuxedStream` exposes no typed end-of-stream signal: after the
+                // remote half-closes its write side and the buffer drains, read()
+                // throws an error that is indistinguishable from other failures at
+                // this layer (the Yamux error type is internal to the muxer module).
+                // Data already accumulated means the remote sent a payload and we
+                // reached its FIN, so deliver it; an empty accumulation means the
+                // stream failed before any payload arrived, so propagate the error.
+                if output.readableBytes > 0 {
+                    return output
+                }
+                throw error
+            }
+            guard output.readableBytes + chunk.readableBytes <= maxBytes else {
+                throw PeerConnectivityError.messageTooLarge(maxBytes)
+            }
+            output.writeBuffer(&chunk)
         }
     }
 
@@ -201,6 +287,32 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
             ))
         } catch {
             eventBroadcaster.emit(.error(error))
+        }
+        // Always release the stream so the muxer can drop its stream entry.
+        // `defer` cannot await, so the close runs after the do/catch instead.
+        await closeReportingFailure(context.stream, label: "inbound resource stream")
+    }
+
+    /// Closes a stream whose handler has no caller to propagate errors to.
+    ///
+    /// Close failures are logged instead of being silently swallowed.
+    private static func closeReportingFailure(_ stream: MuxedStream, label: String) async {
+        do {
+            try await stream.close()
+        } catch {
+            logger.warning("Failed to close \(label): \(error)")
+        }
+    }
+
+    /// Resets a stream after a send failure.
+    ///
+    /// The caller propagates the original I/O error; a reset failure is logged
+    /// instead of being silently swallowed.
+    private static func resetReportingFailure(_ stream: MuxedStream, label: String) async {
+        do {
+            try await stream.reset()
+        } catch {
+            logger.warning("Failed to reset \(label): \(error)")
         }
     }
 
@@ -244,6 +356,12 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         }
     }
 
+    /// Writes the resource envelope (header + payload) to the stream.
+    ///
+    /// Stream lifecycle (close/reset) is owned by the caller. The file handle is
+    /// closed exactly once: in the catch block on failure, or after the do block
+    /// on success — never both, since the success-path close runs only when the
+    /// do block did not throw.
     private static func writeResource(_ resource: PeerResource, to stream: MuxedStream) async throws {
         let handle = try FileHandle(forReadingFrom: resource.url)
         do {
@@ -258,16 +376,17 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
                 chunk.writeBytes(data)
                 try await stream.write(chunk)
             }
-            try handle.close()
-            try await stream.closeWrite()
         } catch {
             do {
                 try handle.close()
             } catch let closeError {
-                assertionFailure("LibP2P resource file close failed: \(closeError)")
+                // The original write error is propagated below; the close failure
+                // is logged instead of being silently swallowed.
+                logger.warning("Failed to close resource file handle after write failure: \(closeError)")
             }
             throw error
         }
+        try handle.close()
     }
 
     private static func resourceSize(at url: URL) throws -> UInt64 {

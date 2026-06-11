@@ -3,6 +3,12 @@ import NIOCore
 public actor PeerConnectivitySession {
     private let backend: any PeerConnectivityBackend
     private var isStarted = false
+    /// Tracks whether `start()` has been attempted, even if it failed.
+    ///
+    /// A failed `backend.start()` can leave partially acquired resources behind,
+    /// so `shutdown()` must reach the backend after any start attempt — not only
+    /// after a successful one.
+    private var hasAttemptedStart = false
     private var isBrowsing = false
     private var isAdvertising = false
 
@@ -27,14 +33,16 @@ public actor PeerConnectivitySession {
 
     public func start() async throws {
         guard !isStarted else { return }
+        hasAttemptedStart = true
         try await backend.start()
         isStarted = true
     }
 
     public func shutdown() async throws {
-        guard isStarted || isBrowsing || isAdvertising else { return }
+        guard hasAttemptedStart || isBrowsing || isAdvertising else { return }
         try await backend.shutdown()
         isStarted = false
+        hasAttemptedStart = false
         isBrowsing = false
         isAdvertising = false
     }

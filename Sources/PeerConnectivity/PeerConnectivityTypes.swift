@@ -75,6 +75,7 @@ public enum PeerConnectivityError: Error, Sendable, Equatable {
     case channelClosed
     case invalidResource
     case resourceTooLarge(Int)
+    case messageTooLarge(Int)
     case backendStopped
     case unsupportedOperation(String)
 }

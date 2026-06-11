@@ -19,8 +19,9 @@ let package = Package(
         .library(name: "PeerConnectivityBonjour", targets: ["PeerConnectivityBonjour"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.1.3"),
+        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.1.5"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.91.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.8.0"),
     ],
     targets: [
         .target(
@@ -41,6 +42,7 @@ let package = Package(
                 .product(name: "P2PMux", package: "swift-libp2p"),
                 .product(name: "P2PMuxYamux", package: "swift-libp2p"),
                 .product(name: "P2PSecurityNoise", package: "swift-libp2p"),
+                .product(name: "Logging", package: "swift-log"),
             ]
         ),
         .target(
