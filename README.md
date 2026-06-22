@@ -10,6 +10,16 @@ The API should stay simple enough for application code to use without learning l
 
 See [Design Philosophy](docs/DESIGN_PHILOSOPHY.md) for the broader project context and design constraints.
 
+## Installation
+
+Add the package to your `Package.swift` dependencies:
+
+```swift
+.package(url: "https://github.com/1amageek/swift-peer-connectivity.git", from: "0.2.0")
+```
+
+The libp2p backends require swift-libp2p 0.2.0.
+
 ## Usage
 
 Create a session with an explicit backend, browse and advertise when the backend supports those roles, then join discovered peers.
@@ -24,7 +34,7 @@ let session = PeerConnectivitySession.multipeer(
     displayName: "Device A"
 )
 
-try await session.require([.nearbyDiscovery, .messageSend])
+try session.require([.nearbyDiscovery, .messageSend])
 try await session.startBrowsing()
 try await session.startAdvertising()
 
@@ -54,6 +64,12 @@ per-call cost — minting a new subscriber — explicit at the call site.
 Multi-peer `send(_:to:[peers])` is exhaustive, not atomic: it attempts every peer
 and, if any fail, throws `PeerSendError` listing per-peer outcomes (which
 succeeded, which failed) instead of aborting on the first failure.
+
+`.error` carries a typed `PeerConnectivityErrorEvent` (operation, peer, and the
+underlying error) so a failure can be attributed rather than surfaced as a bare
+`Error`. Messages and resources use length-prefixed framing, so a truncated
+inbound transfer surfaces as a typed error instead of a silently incomplete
+payload, and inbound handlers apply an idle timeout.
 
 Use `join(_:)` for discovered peers. It uses endpoints for direct-connect backends and invitations for nearby-session backends. Use `connect(to:)`, `invite(_:context:timeout:)`, and `openChannel(to:protocol:)` when backend-specific behavior is intentional.
 
@@ -134,5 +150,7 @@ Use explicit factories so call sites choose the backend intentionally:
 - `PeerConnectivitySession.libp2p(node:capabilities:)`
 - `PeerConnectivitySession.appleNetworkLibP2P(configuration:)`
 - `PeerConnectivitySession.multipeer(serviceType:displayName:)`
+
+`appleNetworkLibP2P(configuration:)` is throwing. When `enableBonjour` is set, it requires at least one listen address to announce; otherwise it throws `PeerConnectivityError.listenAddressRequired` rather than advertising `.bonjourDiscovery` it cannot honor.
 
 Automatic backend selection is intentionally omitted from the initial API surface.

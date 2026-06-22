@@ -164,7 +164,7 @@ let session = PeerConnectivitySession.multipeer(
     displayName: "Robot A"
 )
 
-try await session.require([.nearbyDiscovery, .messageSend])
+try session.require([.nearbyDiscovery, .messageSend])
 try await session.startBrowsing()
 try await session.startAdvertising()
 
@@ -189,11 +189,11 @@ each access. Subscribe before `start()` so no early events are missed.
 For cross-platform Robot communication, the app should choose a libp2p-compatible backend explicitly:
 
 ```swift
-let session = try await PeerConnectivitySession.appleNetworkLibP2P(
+let session = try PeerConnectivitySession.appleNetworkLibP2P(
     configuration: configuration
 )
 
-try await session.require([.libp2pInterop, .streamMultiplexing])
+try session.require([.libp2pInterop, .streamMultiplexing])
 ```
 
 The important distinction is intentional backend choice with a common app-facing workflow.
