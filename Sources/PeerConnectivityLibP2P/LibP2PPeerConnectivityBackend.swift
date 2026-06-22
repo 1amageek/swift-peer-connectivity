@@ -13,13 +13,20 @@ import PeerConnectivity
 ///   `Node` follows the single-consumer `EventEmitting` pattern, so no other
 ///   component may consume the node's event stream while this backend is in use.
 public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnectivityJoining, PeerConnectivityStateProviding {
-    /// Maximum number of bytes accumulated for a single inbound message.
-    ///
-    /// Yamux fragments writes into window-sized frames (256 KB by default), so an
-    /// inbound message must be reassembled by reading until end-of-stream. This cap
-    /// bounds memory usage during reassembly; oversized messages fail with
-    /// `PeerConnectivityError.messageTooLarge`.
+    /// Maximum number of bytes accepted for a single inbound message.
     private static let maxInboundMessageBytes = 16 * 1024 * 1024
+
+    /// Maximum number of bytes accepted for an inbound resource payload.
+    private static let maxInboundResourceBytes = 100 * 1024 * 1024
+
+    /// Idle timeout applied to each inbound `read()`. A stalled peer that sends
+    /// no data within this window has its stream closed instead of pinning the
+    /// handler task and a muxer stream indefinitely.
+    private static let inboundReadIdleTimeout: Duration = .seconds(60)
+
+    /// Maximum number of concurrent inbound resource transfers. Bounds memory
+    /// and file-handle pressure under load.
+    private static let maxConcurrentInboundResources = 8
 
     private static let logger = Logger(label: "swift-peer-connectivity.libp2p")
 
@@ -31,8 +38,18 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
     private let node: Node
     private let messageProtocolID: String
     private let resourceProtocolID: String
-    private let eventBroadcaster = PeerConnectivityEventBroadcaster<PeerConnectivityEvent>()
+    private nonisolated let eventBroadcaster = PeerConnectivityEventBroadcaster<PeerConnectivityEvent>()
+
+    /// Tasks monitoring node events and discovery observations.
     private var tasks: [Task<Void, Never>] = []
+
+    /// Tracks in-flight inbound handler work so `shutdown()` can cancel it
+    /// deterministically. `read()` loops honor cancellation, so cancelling these
+    /// tasks releases their muxer streams promptly.
+    private let inboundTasks = InboundTaskRegistry()
+
+    /// Limits concurrent inbound resource transfers.
+    private let resourceSemaphore = AsyncSemaphore(value: maxConcurrentInboundResources)
 
     public init(
         node: Node,
@@ -47,11 +64,20 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
     }
 
     public func start() async throws {
+        let inboundTasks = self.inboundTasks
+        let resourceSemaphore = self.resourceSemaphore
+
         await node.handle(messageProtocolID) { [eventBroadcaster] context in
-            await Self.handleMessageStream(context: context, eventBroadcaster: eventBroadcaster)
+            await Self.runInboundHandler(registry: inboundTasks) {
+                await Self.handleMessageStream(context: context, eventBroadcaster: eventBroadcaster)
+            }
         }
         await node.handle(resourceProtocolID) { [eventBroadcaster] context in
-            await Self.handleResourceStream(context: context, eventBroadcaster: eventBroadcaster)
+            await Self.runInboundHandler(registry: inboundTasks) {
+                await resourceSemaphore.withPermit {
+                    await Self.handleResourceStream(context: context, eventBroadcaster: eventBroadcaster)
+                }
+            }
         }
 
         // Capture the stream synchronously before spawning the task. `node.events`
@@ -96,7 +122,8 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
                 task.cancel()
             }
             tasks.removeAll()
-            eventBroadcaster.emit(.error(error))
+            await inboundTasks.cancelAll()
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .start, error: error)))
             eventBroadcaster.shutdown()
             throw error
         }
@@ -110,6 +137,9 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
             task.cancel()
         }
         tasks.removeAll()
+        // Cancel in-flight inbound handler work so their read loops unwind and
+        // release their muxer streams before the node tears down.
+        await inboundTasks.cancelAll()
         try await node.shutdown()
     }
 
@@ -124,7 +154,28 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
             throw PeerConnectivityError.unsupportedEndpoint(endpoint)
         }
         let peerID = try await node.connect(to: address)
-        return PeerConnectivityPeer(peerID: peerID)
+        // Carry the dialed address into the returned peer's endpoints so the peer
+        // round-trips through `join`/`connect`: re-joining a returned peer must
+        // reach the same address, even when the dialed address omitted the peer
+        // ID component.
+        let endpoints = Self.endpoints(forDialed: address, peerID: peerID)
+        return PeerConnectivityPeer(peerID: peerID, endpoints: endpoints)
+    }
+
+    /// Produces the endpoints to attach to a peer returned from a successful dial.
+    ///
+    /// The dialed address is normalized to include the resolved peer ID so a
+    /// later `join` reaches the same node deterministically.
+    private static func endpoints(forDialed address: Multiaddr, peerID: PeerID) -> [PeerConnectivityEndpoint] {
+        if address.hasPeerID {
+            return [.libp2p(address.description)]
+        }
+        do {
+            let withPeer = try address.appending(.p2p(peerID))
+            return [.libp2p(withPeer.description)]
+        } catch {
+            return [.libp2p(address.description)]
+        }
     }
 
     public func disconnect(from peer: PeerConnectivityPeer) async throws {
@@ -158,7 +209,9 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         let peerID = try Self.peerID(from: peer)
         let stream = try await node.newStream(to: peerID, protocol: messageProtocolID)
         do {
-            try await stream.write(bytes)
+            // Length-prefix the message so the receiver can detect truncation:
+            // an incomplete frame is a typed failure, never a complete message.
+            try await stream.writeLengthPrefixedMessage(bytes)
         } catch {
             await Self.resetReportingFailure(stream, label: "outbound message stream")
             throw error
@@ -201,10 +254,15 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
             eventBroadcaster.emit(.peerConnected(PeerConnectivityPeer(peerID: peerID)))
         case .peerDisconnected(let peerID):
             eventBroadcaster.emit(.peerDisconnected(PeerConnectivityPeer(peerID: peerID)))
-        case .connectionError(_, let error),
-             .listenError(_, let error),
-             .outgoingConnectionError(peer: _, error: let error):
-            eventBroadcaster.emit(.error(error))
+        case .connectionError(let peerID, let error),
+             .outgoingConnectionError(peer: let peerID, error: let error):
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(
+                operation: .connect,
+                peer: peerID.map { PeerConnectivityPeer(peerID: $0) },
+                error: error
+            )))
+        case .listenError(_, let error):
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .listen, error: error)))
         default:
             break
         }
@@ -223,54 +281,51 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         return capabilities
     }
 
+    /// Runs an inbound handler body inside a tracked, cancellable task and awaits
+    /// it, so the node holds the stream until the body completes while
+    /// `shutdown()` can still cancel the body deterministically.
+    private static func runInboundHandler(
+        registry: InboundTaskRegistry,
+        _ body: @escaping @Sendable () async -> Void
+    ) async {
+        let task = Task { await body() }
+        let id = await registry.register(task)
+        await task.value
+        await registry.remove(id)
+    }
+
     private static func handleMessageStream(
         context: StreamContext,
         eventBroadcaster: PeerConnectivityEventBroadcaster<PeerConnectivityEvent>
     ) async {
+        let peer = PeerConnectivityPeer(peerID: context.remotePeer)
         do {
             let bytes = try await readMessage(from: context.stream)
-            eventBroadcaster.emit(.messageReceived(
-                bytes,
-                from: PeerConnectivityPeer(peerID: context.remotePeer)
-            ))
+            eventBroadcaster.emit(.messageReceived(bytes, from: peer))
+        } catch is CancellationError {
+            // Backend shutdown: unwind quietly, then release the stream below.
         } catch {
-            eventBroadcaster.emit(.error(error))
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(
+                operation: .inboundMessage,
+                peer: peer,
+                error: error
+            )))
         }
         // Always release the stream so the muxer can drop its stream entry.
         // `defer` cannot await, so the close runs after the do/catch instead.
         await closeReportingFailure(context.stream, label: "inbound message stream")
     }
 
-    /// Reads a complete message by accumulating chunks until end-of-stream.
-    ///
-    /// Yamux fragments writes into window-sized frames (256 KB by default), so a
-    /// single `read()` may return only the first fragment of a larger message.
+    /// Reads a single length-prefixed message, honoring cancellation and an idle
+    /// read timeout. Truncation surfaces as a typed `StreamMessageError`/
+    /// `incompleteMessage` rather than being delivered as a complete message.
     private static func readMessage(
         from stream: MuxedStream,
         maxBytes: Int = maxInboundMessageBytes
     ) async throws -> ByteBuffer {
-        var output = ByteBuffer()
-        while true {
-            var chunk: ByteBuffer
-            do {
-                chunk = try await stream.read()
-            } catch {
-                // `MuxedStream` exposes no typed end-of-stream signal: after the
-                // remote half-closes its write side and the buffer drains, read()
-                // throws an error that is indistinguishable from other failures at
-                // this layer (the Yamux error type is internal to the muxer module).
-                // Data already accumulated means the remote sent a payload and we
-                // reached its FIN, so deliver it; an empty accumulation means the
-                // stream failed before any payload arrived, so propagate the error.
-                if output.readableBytes > 0 {
-                    return output
-                }
-                throw error
-            }
-            guard output.readableBytes + chunk.readableBytes <= maxBytes else {
-                throw PeerConnectivityError.messageTooLarge(maxBytes)
-            }
-            output.writeBuffer(&chunk)
+        try Task.checkCancellation()
+        return try await withIdleTimeout(stream: stream) {
+            try await stream.readLengthPrefixedMessage(maxSize: UInt64(maxBytes))
         }
     }
 
@@ -278,24 +333,120 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         context: StreamContext,
         eventBroadcaster: PeerConnectivityEventBroadcaster<PeerConnectivityEvent>
     ) async {
+        let peer = PeerConnectivityPeer(peerID: context.remotePeer)
         do {
-            let buffer = try await readResourceEnvelope(from: context.stream)
-            let resource = try LibP2PResourceCodec.materializeResource(from: buffer)
-            eventBroadcaster.emit(.resourceReceived(
-                resource,
-                from: PeerConnectivityPeer(peerID: context.remotePeer)
-            ))
+            let resource = try await receiveResource(from: context.stream)
+            eventBroadcaster.emit(.resourceReceived(resource, from: peer))
+        } catch is CancellationError {
+            // Backend shutdown: unwind quietly, then release the stream below.
         } catch {
-            eventBroadcaster.emit(.error(error))
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(
+                operation: .inboundResource,
+                peer: peer,
+                error: error
+            )))
         }
         // Always release the stream so the muxer can drop its stream entry.
         // `defer` cannot await, so the close runs after the do/catch instead.
         await closeReportingFailure(context.stream, label: "inbound resource stream")
     }
 
-    /// Closes a stream whose handler has no caller to propagate errors to.
+    /// Streams an inbound resource directly to a temp file as chunks arrive.
     ///
-    /// Close failures are logged instead of being silently swallowed.
+    /// Only the header is held in memory; payload chunks are appended to disk so
+    /// memory is bounded regardless of resource size. The header carries the
+    /// exact payload size, so a stream that ends early is reported as
+    /// `incompleteMessage` and the partial file is removed — never delivered.
+    private static func receiveResource(
+        from stream: MuxedStream,
+        maxBytes: Int = maxInboundResourceBytes
+    ) async throws -> PeerResource {
+        try Task.checkCancellation()
+
+        let headerBuffer = try await withIdleTimeout(stream: stream) {
+            try await stream.readLengthPrefixedMessage(maxSize: UInt64(LibP2PResourceCodec.maxHeaderBytes))
+        }
+        let header = try LibP2PResourceCodec.parseHeaderFrame(headerBuffer)
+        guard header.size <= maxBytes else {
+            throw PeerConnectivityError.resourceTooLarge(maxBytes)
+        }
+
+        let fileURL = try LibP2PResourceCodec.destinationURL(for: header.name)
+        FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: fileURL)
+
+        var received = 0
+        do {
+            while received < header.size {
+                try Task.checkCancellation()
+                var chunk = try await withIdleTimeout(stream: stream) {
+                    try await stream.readLengthPrefixedMessage(maxSize: UInt64(LibP2PResourceCodec.maxChunkBytes))
+                }
+                let count = chunk.readableBytes
+                guard count > 0 else {
+                    throw PeerConnectivityError.incompleteMessage(expected: header.size, received: received)
+                }
+                guard received + count <= header.size else {
+                    throw PeerConnectivityError.invalidResource
+                }
+                if let bytes = chunk.readBytes(length: count) {
+                    try handle.write(contentsOf: Data(bytes))
+                }
+                received += count
+            }
+            try handle.close()
+        } catch {
+            do {
+                try handle.close()
+            } catch let closeError {
+                logger.warning("Failed to close inbound resource file handle: \(closeError)")
+            }
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+            } catch let removeError {
+                logger.warning("Failed to remove partial inbound resource file: \(removeError)")
+            }
+            // A read failure mid-transfer is truncation: surface it as a typed
+            // failure rather than delivering a partial file.
+            if error is CancellationError || error is PeerConnectivityError {
+                throw error
+            }
+            throw PeerConnectivityError.incompleteMessage(expected: header.size, received: received)
+        }
+
+        return PeerResource(url: fileURL, name: header.name)
+    }
+
+    /// Runs an inbound `read`-based operation under an idle timeout: if it does
+    /// not complete within `inboundReadIdleTimeout`, the stream is reset and a
+    /// `readTimeout` is thrown.
+    private static func withIdleTimeout<R: Sendable>(
+        stream: MuxedStream,
+        _ operation: @escaping @Sendable () async throws -> R
+    ) async throws -> R {
+        try await withThrowingTaskGroup(of: R.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: inboundReadIdleTimeout)
+                throw PeerConnectivityError.readTimeout
+            }
+            do {
+                guard let result = try await group.next() else {
+                    throw PeerConnectivityError.readTimeout
+                }
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                if case PeerConnectivityError.readTimeout = error {
+                    await resetReportingFailure(stream, label: "timed-out inbound stream")
+                }
+                throw error
+            }
+        }
+    }
+
+    /// Closes a stream whose handler has no caller to propagate errors to.
     private static func closeReportingFailure(_ stream: MuxedStream, label: String) async {
         do {
             try await stream.close()
@@ -304,10 +455,8 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         }
     }
 
-    /// Resets a stream after a send failure.
-    ///
-    /// The caller propagates the original I/O error; a reset failure is logged
-    /// instead of being silently swallowed.
+    /// Resets a stream after a send failure. The caller propagates the original
+    /// I/O error; a reset failure is logged instead of being silently swallowed.
     private static func resetReportingFailure(_ stream: MuxedStream, label: String) async {
         do {
             try await stream.reset()
@@ -316,65 +465,29 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         }
     }
 
-    private static func readResourceEnvelope(
-        from stream: MuxedStream,
-        maxBytes: Int = 100 * 1024 * 1024
-    ) async throws -> ByteBuffer {
-        var output = ByteBuffer()
-
-        while true {
-            if let totalLength = try LibP2PResourceCodec.expectedTotalLength(
-                in: output,
-                maxPayloadBytes: maxBytes
-            ) {
-                if output.readableBytes == totalLength {
-                    return output
-                }
-                if output.readableBytes > totalLength {
-                    throw PeerConnectivityError.invalidResource
-                }
-            }
-
-            do {
-                var chunk = try await stream.read()
-                if chunk.readableBytes == 0 {
-                    throw PeerConnectivityError.invalidResource
-                }
-                guard output.readableBytes + chunk.readableBytes <= maxBytes + 16 * 1024 else {
-                    throw PeerConnectivityError.resourceTooLarge(maxBytes)
-                }
-                output.writeBuffer(&chunk)
-            } catch {
-                if let peerConnectivityError = error as? PeerConnectivityError {
-                    throw peerConnectivityError
-                }
-                if output.readableBytes == 0 {
-                    throw error
-                }
-                throw PeerConnectivityError.invalidResource
-            }
-        }
-    }
-
-    /// Writes the resource envelope (header + payload) to the stream.
+    /// Writes the resource as length-prefixed frames: a header frame followed by
+    /// payload chunk frames.
     ///
-    /// Stream lifecycle (close/reset) is owned by the caller. The file handle is
-    /// closed exactly once: in the catch block on failure, or after the do block
-    /// on success — never both, since the success-path close runs only when the
-    /// do block did not throw.
+    /// File reads are performed off the cooperative pool (`Task.detached`) so a
+    /// large resource does not occupy a cooperative thread with blocking file
+    /// I/O. Stream lifecycle (close/reset) is owned by the caller. The file
+    /// handle is closed exactly once.
     private static func writeResource(_ resource: PeerResource, to stream: MuxedStream) async throws {
         let handle = try FileHandle(forReadingFrom: resource.url)
         do {
             let size = try resourceSize(at: resource.url)
-            try await stream.write(LibP2PResourceCodec.header(for: resource.name, size: size))
+            try await stream.writeLengthPrefixedMessage(
+                LibP2PResourceCodec.header(for: resource.name, size: size)
+            )
             while true {
-                let data = try handle.read(upToCount: 64 * 1024) ?? Data()
+                try Task.checkCancellation()
+                let data = try await readChunk(from: handle, upToCount: 64 * 1024)
                 if data.isEmpty {
                     break
                 }
-                var chunk = ByteBuffer()
-                chunk.writeBytes(data)
-                try await stream.write(chunk)
+                var buffer = ByteBuffer()
+                buffer.writeBytes(data)
+                try await stream.writeLengthPrefixedMessage(buffer)
             }
         } catch {
             do {
@@ -389,12 +502,25 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         try handle.close()
     }
 
+    /// Reads up to `count` bytes from `handle` off the cooperative pool.
+    private static func readChunk(from handle: FileHandle, upToCount count: Int) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            try handle.read(upToCount: count) ?? Data()
+        }.value
+    }
+
     private static func resourceSize(at url: URL) throws -> UInt64 {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         guard let size = attributes[.size] as? NSNumber else {
             throw PeerConnectivityError.invalidResource
         }
         return size.uint64Value
+    }
+
+    /// Number of in-flight inbound handler tasks. Exposed for tests to verify
+    /// deterministic teardown on `shutdown()`.
+    func inboundTaskCountForTesting() async -> Int {
+        await inboundTasks.count
     }
 
     private static func peerID(from peer: PeerConnectivityPeer) throws -> PeerID {
@@ -409,6 +535,70 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         }
     }
 
+}
+
+/// Tracks in-flight inbound handler tasks so they can be cancelled on teardown.
+actor InboundTaskRegistry {
+    private var tasks: [UInt64: Task<Void, Never>] = [:]
+    private var nextID: UInt64 = 0
+
+    func register(_ task: Task<Void, Never>) -> UInt64 {
+        let id = nextID
+        nextID += 1
+        tasks[id] = task
+        return id
+    }
+
+    func remove(_ id: UInt64) {
+        tasks.removeValue(forKey: id)
+    }
+
+    func cancelAll() {
+        for task in tasks.values {
+            task.cancel()
+        }
+        tasks.removeAll()
+    }
+
+    var count: Int { tasks.count }
+}
+
+/// A minimal async counting semaphore for bounding concurrent transfers.
+///
+/// Implemented with an actor so acquiring suspends (never blocks a thread) when
+/// no permits are available.
+actor AsyncSemaphore {
+    private var permits: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(value: Int) {
+        self.permits = value
+    }
+
+    private func acquire() async {
+        if permits > 0 {
+            permits -= 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+        } else {
+            permits += 1
+        }
+    }
+
+    func withPermit(_ body: @Sendable () async -> Void) async {
+        await acquire()
+        await body()
+        release()
+    }
 }
 
 public struct LibP2PPeerConnectivityChannel: PeerConnectivityChannel {

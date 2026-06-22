@@ -44,10 +44,14 @@ public actor MultipeerConnectivityBackend:
         self.session.delegate = delegate
     }
 
-    public func start() async throws {
-        try await startBrowsing()
-        try await startAdvertising()
-    }
+    /// Prepares the backend for use.
+    ///
+    /// To keep `start()` semantics consistent with the libp2p backend, this does
+    /// NOT implicitly begin browsing or advertising. The `MCSession` is created
+    /// at init, so there is no further preparation needed. Callers must invoke
+    /// `startBrowsing()` / `startAdvertising()` explicitly, which keeps the
+    /// session's `isBrowsing` / `isAdvertising` flags accurate.
+    public func start() async throws {}
 
     public func startBrowsing() async throws {
         guard browser == nil else { return }
@@ -184,7 +188,11 @@ public actor MultipeerConnectivityBackend:
             let completion = ResourceTransferCompletion(continuation: continuation)
             let progress = session.sendResource(at: resource.url, withName: resource.name, toPeer: target) { [eventBroadcaster] error in
                 if let error {
-                    eventBroadcaster.emit(.error(error))
+                    eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(
+                        operation: .outboundResource,
+                        peer: peer,
+                        error: error
+                    )))
                     completion.resume(throwing: error)
                 } else {
                     completion.resume()
@@ -254,53 +262,62 @@ private enum MultipeerPeerCodec {
 private final class MultipeerDelegate: NSObject, MCSessionDelegate, MCNearbyServiceBrowserDelegate, MCNearbyServiceAdvertiserDelegate {
     let session: MCSession
     let eventBroadcaster: PeerConnectivityEventBroadcaster<PeerConnectivityEvent>
-    private let peers = Mutex<[String: MCPeerID]>([:])
+
+    /// `MCPeerID` instances whose lifetime is tied to a connection state.
+    ///
+    /// An entry is added only when a peer is discovered by the browser (so it can
+    /// be invited) or becomes connected, and removed when it is lost or
+    /// disconnected. Data/stream/resource callbacks do NOT add entries — they
+    /// derive a `PeerConnectivityPeer` directly from the `MCPeerID` they already
+    /// hold — so a peer that merely sends bytes cannot pin an entry forever.
+    private let registry = Mutex<Registry>(Registry())
+
+    private struct Registry: Sendable {
+        /// Peers found by the browser, removed on `lostPeer`.
+        var discovered: [String: MCPeerID] = [:]
+        /// Peers in the `.connected` state, removed on `.notConnected`.
+        var connected: [String: MCPeerID] = [:]
+    }
 
     init(session: MCSession, eventBroadcaster: PeerConnectivityEventBroadcaster<PeerConnectivityEvent>) {
         self.session = session
         self.eventBroadcaster = eventBroadcaster
     }
 
+    /// Looks up an `MCPeerID` known from discovery or an active connection.
     func peer(withID id: String) -> MCPeerID? {
-        peers.withLock { $0[id] }
-    }
-
-    private func register(_ peerID: MCPeerID) throws -> PeerConnectivityPeer {
-        let peer = try MultipeerPeerCodec.peer(from: peerID)
-        peers.withLock { $0[peer.id] = peerID }
-        return peer
-    }
-
-    private func unregister(_ peerID: MCPeerID) throws -> PeerConnectivityPeer {
-        let peer = try MultipeerPeerCodec.peer(from: peerID)
-        _ = peers.withLock { $0.removeValue(forKey: peer.id) }
-        return peer
+        registry.withLock { $0.discovered[id] ?? $0.connected[id] }
     }
 
     func removeAllPeers() {
-        peers.withLock { $0.removeAll() }
+        registry.withLock { registry in
+            registry.discovered.removeAll()
+            registry.connected.removeAll()
+        }
     }
 
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
         do {
-            let peer = try register(peerID)
+            let peer = try MultipeerPeerCodec.peer(from: peerID)
+            registry.withLock { $0.discovered[peer.id] = peerID }
             eventBroadcaster.emit(.peerDiscovered(peer, endpoints: peer.endpoints))
         } catch {
-            eventBroadcaster.emit(.error(error))
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .discovery, error: error)))
         }
     }
 
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
         do {
-            let peer = try unregister(peerID)
+            let peer = try MultipeerPeerCodec.peer(from: peerID)
+            registry.withLock { _ = $0.discovered.removeValue(forKey: peer.id) }
             eventBroadcaster.emit(.peerLost(peer))
         } catch {
-            eventBroadcaster.emit(.error(error))
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .discovery, error: error)))
         }
     }
 
     func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: any Error) {
-        eventBroadcaster.emit(.error(error))
+        eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .discovery, error: error)))
     }
 
     func advertiser(
@@ -309,33 +326,33 @@ private final class MultipeerDelegate: NSObject, MCSessionDelegate, MCNearbyServ
         withContext context: Data?,
         invitationHandler: @escaping (Bool, MCSession?) -> Void
     ) {
-        do {
-            _ = try register(peerID)
-        } catch {
-            eventBroadcaster.emit(.error(error))
-            invitationHandler(false, nil)
-            return
-        }
+        // Accept the invitation. The peer is registered only once it reaches the
+        // `.connected` state (in `didChange`), so a declined or never-completed
+        // handshake does not leak a registry entry.
         invitationHandler(true, session)
     }
 
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: any Error) {
-        eventBroadcaster.emit(.error(error))
+        eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .discovery, error: error)))
     }
 
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         switch state {
         case .connected:
             do {
-                eventBroadcaster.emit(.peerConnected(try register(peerID)))
+                let peer = try MultipeerPeerCodec.peer(from: peerID)
+                registry.withLock { $0.connected[peer.id] = peerID }
+                eventBroadcaster.emit(.peerConnected(peer))
             } catch {
-                eventBroadcaster.emit(.error(error))
+                eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .connect, error: error)))
             }
         case .notConnected:
             do {
-                eventBroadcaster.emit(.peerDisconnected(try unregister(peerID)))
+                let peer = try MultipeerPeerCodec.peer(from: peerID)
+                registry.withLock { _ = $0.connected.removeValue(forKey: peer.id) }
+                eventBroadcaster.emit(.peerDisconnected(peer))
             } catch {
-                eventBroadcaster.emit(.error(error))
+                eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .connect, error: error)))
             }
         case .connecting:
             break
@@ -348,15 +365,16 @@ private final class MultipeerDelegate: NSObject, MCSessionDelegate, MCNearbyServ
         var buffer = ByteBuffer()
         buffer.writeBytes(data)
         do {
-            eventBroadcaster.emit(.messageReceived(buffer, from: try register(peerID)))
+            let peer = try MultipeerPeerCodec.peer(from: peerID)
+            eventBroadcaster.emit(.messageReceived(buffer, from: peer))
         } catch {
-            eventBroadcaster.emit(.error(error))
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .inboundMessage, error: error)))
         }
     }
 
     func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {
         do {
-            let peer = try register(peerID)
+            let peer = try MultipeerPeerCodec.peer(from: peerID)
             eventBroadcaster.emit(.channelOpened(MultipeerConnectivityChannel(
                 peer: peer,
                 protocolID: streamName,
@@ -364,7 +382,7 @@ private final class MultipeerDelegate: NSObject, MCSessionDelegate, MCNearbyServ
                 output: nil
             )))
         } catch {
-            eventBroadcaster.emit(.error(error))
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .inboundMessage, error: error)))
         }
     }
 
@@ -382,28 +400,45 @@ private final class MultipeerDelegate: NSObject, MCSessionDelegate, MCNearbyServ
         at localURL: URL?,
         withError error: (any Error)?
     ) {
+        let peer: PeerConnectivityPeer
+        do {
+            peer = try MultipeerPeerCodec.peer(from: peerID)
+        } catch {
+            // The peer identity could not be derived; surface that as the error
+            // (along with any transfer error) without peer attribution.
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(operation: .inboundResource, error: error)))
+            return
+        }
+
         if let error {
-            eventBroadcaster.emit(.error(error))
+            eventBroadcaster.emit(.error(PeerConnectivityErrorEvent(
+                operation: .inboundResource,
+                peer: peer,
+                error: error
+            )))
         } else if let localURL {
-            do {
-                eventBroadcaster.emit(.resourceReceived(
-                    PeerResource(url: localURL, name: resourceName),
-                    from: try register(peerID)
-                ))
-            } catch {
-                eventBroadcaster.emit(.error(error))
-            }
+            eventBroadcaster.emit(.resourceReceived(
+                PeerResource(url: localURL, name: resourceName),
+                from: peer
+            ))
         }
     }
 }
 
+/// A channel over a MultipeerConnectivity byte stream.
+///
+/// Reads and writes are driven by the stream run-loop / `Stream.Delegate` event
+/// model rather than by blocking I/O held under a lock. The input and output
+/// streams are independently pumped (`StreamPump`), so a blocked read can never
+/// stall a write or a close. No lock is held across blocking I/O — the pumps
+/// suspend the caller and resume it from a delegate callback when the stream is
+/// ready.
 public final class MultipeerConnectivityChannel: PeerConnectivityChannel {
     public let peer: PeerConnectivityPeer
     public let protocolID: String?
 
-    private let lock = Mutex(())
-    nonisolated(unsafe) private let input: InputStream?
-    nonisolated(unsafe) private let output: OutputStream?
+    private let inputPump: InputStreamPump?
+    private let outputPump: OutputStreamPump?
 
     public init(
         peer: PeerConnectivityPeer,
@@ -413,65 +448,27 @@ public final class MultipeerConnectivityChannel: PeerConnectivityChannel {
     ) {
         self.peer = peer
         self.protocolID = protocolID
-        self.input = input
-        self.output = output
-        self.input?.open()
-        self.output?.open()
+        self.inputPump = input.map { InputStreamPump(stream: $0) }
+        self.outputPump = output.map { OutputStreamPump(stream: $0) }
     }
 
     public func read() async throws -> ByteBuffer {
-        try lock.withLock { _ in
-            guard let input else {
-                throw PeerConnectivityError.channelUnavailable
-            }
-
-            var storage = [UInt8](repeating: 0, count: 64 * 1024)
-            let count = input.read(&storage, maxLength: storage.count)
-            if count > 0 {
-                return ByteBuffer(bytes: storage.prefix(count))
-            }
-            if let error = input.streamError {
-                throw error
-            }
-            throw PeerConnectivityError.channelClosed
+        guard let inputPump else {
+            throw PeerConnectivityError.channelUnavailable
         }
+        return try await inputPump.read()
     }
 
     public func write(_ bytes: ByteBuffer) async throws {
-        try lock.withLock { _ in
-            guard let output else {
-                throw PeerConnectivityError.channelUnavailable
-            }
-
-            let storage = Array(bytes.readableBytesView)
-            var written = 0
-            while written < storage.count {
-                let count = storage.withUnsafeBytes { rawBuffer -> Int in
-                    guard let baseAddress = rawBuffer.baseAddress else {
-                        return 0
-                    }
-                    return output.write(
-                        baseAddress.advanced(by: written).assumingMemoryBound(to: UInt8.self),
-                        maxLength: storage.count - written
-                    )
-                }
-                if count > 0 {
-                    written += count
-                    continue
-                }
-                if let error = output.streamError {
-                    throw error
-                }
-                throw PeerConnectivityError.channelClosed
-            }
+        guard let outputPump else {
+            throw PeerConnectivityError.channelUnavailable
         }
+        try await outputPump.write(bytes)
     }
 
     public func close() async throws {
-        lock.withLock { _ in
-            input?.close()
-            output?.close()
-        }
+        inputPump?.close()
+        outputPump?.close()
     }
 }
 #else

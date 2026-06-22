@@ -16,6 +16,32 @@ public actor PeerConnectivitySession {
         backend.capabilities
     }
 
+    /// Subscribes to backend events.
+    ///
+    /// This is the misuse-resistant access point for the event stream. Each call
+    /// returns a NEW independent `AsyncStream`: the backend follows the
+    /// `EventBroadcaster` (multi-consumer) convention, so multiple components can
+    /// each `for await session.subscribe()` and every subscriber sees every event
+    /// emitted after it subscribed.
+    ///
+    /// - Important: A subscription only observes events emitted AFTER it is
+    ///   created. To avoid missing early events, subscribe BEFORE calling
+    ///   `start()` / `startBrowsing()` / `startAdvertising()`.
+    ///
+    /// The method form (rather than a computed property) makes the per-call
+    /// cost — minting a new subscriber — explicit at the call site, instead of a
+    /// property access that silently creates a fresh subscription each time.
+    public nonisolated func subscribe() -> AsyncStream<PeerConnectivityEvent> {
+        backend.events
+    }
+
+    /// Subscribes to backend events.
+    ///
+    /// - Warning: Each access creates a NEW subscription, so reading `events`
+    ///   twice yields two independent streams and the second misses events the
+    ///   first already consumed. Use ``subscribe()`` instead, which names this
+    ///   per-call cost explicitly.
+    @available(*, deprecated, renamed: "subscribe()", message: "Each access mints a new subscription; use subscribe() to make the per-call cost explicit.")
     public nonisolated var events: AsyncStream<PeerConnectivityEvent> {
         backend.events
     }
@@ -137,13 +163,33 @@ public actor PeerConnectivitySession {
         try await backend.send(bytes, to: peer, mode: mode)
     }
 
+    /// Sends `bytes` to every peer in `peers`.
+    ///
+    /// The send is NOT atomic, but it is exhaustive: it attempts every peer and
+    /// never aborts mid-batch on the first failure. If one or more peers fail, it
+    /// throws `PeerSendError` carrying per-peer outcomes (which peers succeeded
+    /// and which failed), so a partial result is reported explicitly rather than
+    /// silently. On full success it returns normally.
+    ///
+    /// Sends run sequentially in `peers` order to preserve a deterministic
+    /// per-peer ordering of writes.
     public func send(
         _ bytes: ByteBuffer,
         to peers: [PeerConnectivityPeer],
         mode: PeerSendMode = .reliable
     ) async throws {
+        var outcomes: [PeerSendOutcome] = []
+        outcomes.reserveCapacity(peers.count)
         for peer in peers {
-            try await backend.send(bytes, to: peer, mode: mode)
+            do {
+                try await backend.send(bytes, to: peer, mode: mode)
+                outcomes.append(PeerSendOutcome(peer: peer))
+            } catch {
+                outcomes.append(PeerSendOutcome(peer: peer, error: error))
+            }
+        }
+        if outcomes.contains(where: { !$0.succeeded }) {
+            throw PeerSendError(outcomes: outcomes)
         }
     }
 

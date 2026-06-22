@@ -23,7 +23,7 @@ struct PeerConnectivityE2ETests {
         let client = makeMemoryNode(hub: hub)
         let serverSession = PeerConnectivitySession.libp2p(node: server)
         let clientSession = PeerConnectivitySession.libp2p(node: client)
-        var serverEvents = serverSession.events.makeAsyncIterator()
+        var serverEvents = serverSession.subscribe().makeAsyncIterator()
 
         try await serverSession.start()
         try await clientSession.start()
@@ -49,7 +49,7 @@ struct PeerConnectivityE2ETests {
         let client = makeMemoryNode(hub: hub)
         let serverSession = PeerConnectivitySession.libp2p(node: server)
         let clientSession = PeerConnectivitySession.libp2p(node: client)
-        var serverEvents = serverSession.events.makeAsyncIterator()
+        var serverEvents = serverSession.subscribe().makeAsyncIterator()
 
         try await serverSession.start()
         try await clientSession.start()
@@ -128,7 +128,7 @@ struct PeerConnectivityE2ETests {
 
         let serverSession = PeerConnectivitySession.libp2p(node: server)
         let clientSession = PeerConnectivitySession.libp2p(node: client)
-        var serverEvents = serverSession.events.makeAsyncIterator()
+        var serverEvents = serverSession.subscribe().makeAsyncIterator()
 
         try await serverSession.start()
         try await clientSession.start()
@@ -170,7 +170,7 @@ struct PeerConnectivityE2ETests {
 
         let serverSession = PeerConnectivitySession.libp2p(node: server)
         let clientSession = PeerConnectivitySession.libp2p(node: client)
-        var serverEvents = serverSession.events.makeAsyncIterator()
+        var serverEvents = serverSession.subscribe().makeAsyncIterator()
 
         try await serverSession.start()
         try await clientSession.start()
@@ -212,7 +212,7 @@ struct PeerConnectivityE2ETests {
 
         let serverSession = PeerConnectivitySession.libp2p(node: server)
         let clientSession = PeerConnectivitySession.libp2p(node: client)
-        var serverEvents = serverSession.events.makeAsyncIterator()
+        var serverEvents = serverSession.subscribe().makeAsyncIterator()
 
         try await serverSession.start()
         try await clientSession.start()
@@ -318,8 +318,8 @@ struct PeerConnectivityE2ETests {
             if case .messageReceived(let bytes, _) = event {
                 return bytes
             }
-            if case .error(let error) = event {
-                throw error
+            if case .error(let errorEvent) = event {
+                throw errorEvent.error
             }
         }
         throw PeerConnectivityE2EError.streamEnded

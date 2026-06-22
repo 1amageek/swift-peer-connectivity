@@ -48,7 +48,12 @@ struct NetworkBonjourTXTCodecTests {
         )
 
         #expect(dictionary["agent"] == "test-agent")
-        #expect(dictionary["dnsaddr"] == dictionary["dnsaddr.0"])
+        // The writer uses a single indexed key scheme (`dnsaddr.N`) and no longer
+        // duplicates the first address under a bare `dnsaddr` key, to avoid
+        // wasting scarce TXT-record bytes.
+        #expect(dictionary["dnsaddr"] == nil)
+        #expect(dictionary["dnsaddr.0"] != nil)
+        #expect(dictionary["dnsaddr.1"] != nil)
         #expect(candidate.peerID == peerID)
         #expect(candidate.addresses.count == 2)
         #expect(candidate.addresses.allSatisfy { $0.peerID == peerID })

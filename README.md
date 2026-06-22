@@ -28,7 +28,7 @@ try await session.require([.nearbyDiscovery, .messageSend])
 try await session.startBrowsing()
 try await session.startAdvertising()
 
-for await event in await session.events {
+for await event in session.subscribe() {
     switch event {
     case .peerDiscovered(let peer, _):
         let connectedPeer = try await session.join(peer)
@@ -37,11 +37,23 @@ for await event in await session.events {
         try await session.send(message, to: connectedPeer)
     case .messageReceived(let bytes, let peer):
         handle(bytes, from: peer)
+    case .error(let errorEvent):
+        handle(errorEvent.error, operation: errorEvent.operation, peer: errorEvent.peer)
     default:
         break
     }
 }
 ```
+
+`subscribe()` returns a NEW independent event stream on each call (multi-consumer
+broadcaster semantics). Subscribe BEFORE `start()` / `startBrowsing()` so the
+subscription does not miss early events; a subscription only observes events
+emitted after it is created. The method form (not a computed property) makes the
+per-call cost — minting a new subscriber — explicit at the call site.
+
+Multi-peer `send(_:to:[peers])` is exhaustive, not atomic: it attempts every peer
+and, if any fail, throws `PeerSendError` listing per-peer outcomes (which
+succeeded, which failed) instead of aborting on the first failure.
 
 Use `join(_:)` for discovered peers. It uses endpoints for direct-connect backends and invitations for nearby-session backends. Use `connect(to:)`, `invite(_:context:timeout:)`, and `openChannel(to:protocol:)` when backend-specific behavior is intentional.
 

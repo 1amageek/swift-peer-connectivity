@@ -31,7 +31,7 @@ struct Chat {
         installShutdownHandler(session: session)
         startStdinReader(session: session, inbox: inbox, localName: displayName)
 
-        for await event in session.events {
+        for await event in session.subscribe() {
             switch event {
             case .peerDiscovered(let peer, _):
                 print("# discovered \(peer.displayName)")
@@ -64,8 +64,8 @@ struct Chat {
             case .channelOpened, .resourceReceived:
                 break
 
-            case .error(let error):
-                print("# error: \(error)")
+            case .error(let errorEvent):
+                print("# error [\(errorEvent.operation)]: \(errorEvent.error)")
             }
         }
     }

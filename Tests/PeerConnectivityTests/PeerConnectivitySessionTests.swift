@@ -34,7 +34,7 @@ struct PeerConnectivitySessionTests {
     func forwardsBackendEvents() async throws {
         let backend = FakePeerConnectivityBackend(capabilities: [.messageSend])
         let session = PeerConnectivitySession(backend: backend)
-        var iterator = session.events.makeAsyncIterator()
+        var iterator = session.subscribe().makeAsyncIterator()
 
         let peer = PeerConnectivityPeer(id: "peer-a", displayName: "Peer A")
         backend.emit(.peerConnected(peer))
@@ -54,6 +54,102 @@ struct PeerConnectivitySessionTests {
             PeerConnectivityPeer(id: "peer-a", displayName: "Peer A"),
             PeerConnectivityPeer(id: "peer-b", displayName: "Peer B")
         ]
+
+        var buffer = ByteBuffer()
+        buffer.writeString("hello")
+        try await session.send(buffer, to: peers)
+
+        #expect(backend.sentPeerIDs() == ["peer-a", "peer-b"])
+    }
+
+    // MARK: - events / subscribe semantics (Finding 1)
+
+    @Test(.timeLimit(.minutes(1)))
+    func subscribeDeliversEventsToMultipleIndependentSubscribers() async throws {
+        let backend = FakePeerConnectivityBackend(capabilities: [.messageSend])
+        let session = PeerConnectivitySession(backend: backend)
+
+        // Two independent subscribers created BEFORE emitting must each observe
+        // the event: subscribe() honors the multi-consumer (broadcaster) contract.
+        var first = session.subscribe().makeAsyncIterator()
+        var second = session.subscribe().makeAsyncIterator()
+
+        let peer = PeerConnectivityPeer(id: "peer-a", displayName: "Peer A")
+        backend.emit(.peerConnected(peer))
+
+        guard case .peerConnected(let firstPeer)? = await first.next() else {
+            Issue.record("first subscriber missed event")
+            return
+        }
+        guard case .peerConnected(let secondPeer)? = await second.next() else {
+            Issue.record("second subscriber missed event")
+            return
+        }
+        #expect(firstPeer == peer)
+        #expect(secondPeer == peer)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func subscribeCreatedAfterEmissionMissesPriorEvents() async throws {
+        let backend = FakePeerConnectivityBackend(capabilities: [.messageSend])
+        let session = PeerConnectivitySession(backend: backend)
+
+        // Document the contract: a subscription only observes events emitted
+        // AFTER it is created. An event emitted before subscribing is not
+        // replayed; the later event is the first one seen.
+        let early = PeerConnectivityPeer(id: "early", displayName: "Early")
+        backend.emit(.peerConnected(early))
+
+        var iterator = session.subscribe().makeAsyncIterator()
+        let late = PeerConnectivityPeer(id: "late", displayName: "Late")
+        backend.emit(.peerConnected(late))
+
+        guard case .peerConnected(let received)? = await iterator.next() else {
+            Issue.record("expected the post-subscribe event")
+            return
+        }
+        #expect(received == late)
+    }
+
+    // MARK: - Multi-peer send partial-failure aggregation (Finding 2)
+
+    @Test(.timeLimit(.minutes(1)))
+    func multiPeerSendAttemptsAllPeersAndAggregatesPartialFailure() async throws {
+        let peers = [
+            PeerConnectivityPeer(id: "peer-a", displayName: "Peer A"),
+            PeerConnectivityPeer(id: "peer-b", displayName: "Peer B"),
+            PeerConnectivityPeer(id: "peer-c", displayName: "Peer C")
+        ]
+        let backend = FakePeerConnectivityBackend(
+            capabilities: [.messageSend],
+            failingPeerIDs: ["peer-b"]
+        )
+        let session = PeerConnectivitySession(backend: backend)
+
+        var buffer = ByteBuffer()
+        buffer.writeString("hello")
+
+        do {
+            try await session.send(buffer, to: peers)
+            Issue.record("multi-peer send unexpectedly reported full success despite a failing peer")
+        } catch let error as PeerSendError {
+            // No mid-batch abort: every peer was attempted, so the failure after
+            // peer-b must not stop peer-c.
+            #expect(backend.sentPeerIDs() == ["peer-a", "peer-c"])
+            #expect(Set(error.succeeded.map { $0.id }) == ["peer-a", "peer-c"])
+            #expect(error.failed.map { $0.peer.id } == ["peer-b"])
+            #expect(error.outcomes.count == 3)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func multiPeerSendSucceedsSilentlyWhenAllPeersSucceed() async throws {
+        let peers = [
+            PeerConnectivityPeer(id: "peer-a", displayName: "Peer A"),
+            PeerConnectivityPeer(id: "peer-b", displayName: "Peer B")
+        ]
+        let backend = FakePeerConnectivityBackend(capabilities: [.messageSend])
+        let session = PeerConnectivitySession(backend: backend)
 
         var buffer = ByteBuffer()
         buffer.writeString("hello")
@@ -170,7 +266,7 @@ struct PeerConnectivitySessionTests {
         let discoveredPeer = PeerConnectivityPeer(id: "peer-a", displayName: "Peer A")
         let backend = FakeUsageBackend(discoveredPeer: discoveredPeer)
         let session = PeerConnectivitySession(backend: backend)
-        var iterator = session.events.makeAsyncIterator()
+        var iterator = session.subscribe().makeAsyncIterator()
 
         try session.require([.nearbyDiscovery, .messageSend])
         try await session.startBrowsing()
@@ -346,14 +442,27 @@ struct PeerConnectivitySessionTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func libp2pResourceCodecRejectsOversizedPayloadAdvertisement() throws {
-        let buffer = LibP2PResourceCodec.header(for: "payload.txt", size: 11)
+    func libp2pResourceCodecParsesHeaderFrameRoundTrip() throws {
+        let frame = LibP2PResourceCodec.header(for: "payload.txt", size: 11)
+        let header = try LibP2PResourceCodec.parseHeaderFrame(frame)
+
+        #expect(header.name == "payload.txt")
+        #expect(header.size == 11)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func libp2pResourceCodecRejectsHeaderFrameWithoutSizeTerminator() throws {
+        var frame = ByteBuffer()
+        frame.writeString("payload.txt")
+        frame.writeInteger(UInt8(0))
+        // Size field is present but not terminated by the trailing separator.
+        frame.writeString("11")
 
         do {
-            _ = try LibP2PResourceCodec.expectedTotalLength(in: buffer, maxPayloadBytes: 10)
-            Issue.record("resource codec unexpectedly accepted oversized payload advertisement")
+            _ = try LibP2PResourceCodec.parseHeaderFrame(frame)
+            Issue.record("header parse unexpectedly accepted unterminated size field")
         } catch let error as PeerConnectivityError {
-            #expect(error == .resourceTooLarge(10))
+            #expect(error == .invalidResource)
         }
     }
 
@@ -374,7 +483,7 @@ struct PeerConnectivitySessionTests {
             ]
         )
         let clientSession = PeerConnectivitySession.libp2p(node: client)
-        var serverEvents = serverSession.events.makeAsyncIterator()
+        var serverEvents = serverSession.subscribe().makeAsyncIterator()
 
         try await serverSession.start()
         try await clientSession.start()
@@ -396,6 +505,174 @@ struct PeerConnectivitySessionTests {
         hub.reset()
         cleanup(url: sourceURL)
         cleanup(url: resource.url)
+    }
+
+    // MARK: - connect(to:) round-trips through join (Finding 8)
+
+    @Test(.timeLimit(.minutes(1)))
+    func libp2pConnectReturnsPeerThatRoundTripsThroughJoin() async throws {
+        let hub = MemoryHub()
+        let serverAddress = Multiaddr.memory(id: "peer-connectivity-roundtrip")
+        let server = makeLibP2PNode(hub: hub, listenAddress: serverAddress)
+        let client = makeLibP2PNode(hub: hub)
+        let serverSession = PeerConnectivitySession.libp2p(
+            node: server,
+            capabilities: [.libp2pInterop, .inboundListening, .messageSend, .streamMultiplexing]
+        )
+        let clientSession = PeerConnectivitySession.libp2p(node: client)
+
+        try await serverSession.start()
+        try await clientSession.start()
+
+        // connect(to:) must return a peer carrying the dialed address as an
+        // endpoint, otherwise a later join cannot reach the same node.
+        let connectedPeer = try await clientSession.connect(to: .libp2p(serverAddress.description))
+        #expect(!connectedPeer.endpoints.isEmpty)
+
+        // Round-trip: joining the returned peer must reach the same server using
+        // only the endpoints carried on the peer.
+        let rejoinedPeer = try await clientSession.join(connectedPeer)
+        #expect(rejoinedPeer.id == connectedPeer.id)
+
+        try await clientSession.shutdown()
+        try await serverSession.shutdown()
+        hub.reset()
+    }
+
+    // MARK: - Inbound truncation surfaces as a typed failure (Finding 5)
+
+    @Test(.timeLimit(.minutes(1)))
+    func libp2pInboundTruncationSurfacesAsTypedFailureNotCompleteMessage() async throws {
+        let hub = MemoryHub()
+        let serverAddress = Multiaddr.memory(id: "peer-connectivity-truncation")
+        let server = makeLibP2PNode(hub: hub, listenAddress: serverAddress)
+        let client = makeLibP2PNode(hub: hub)
+        let serverSession = PeerConnectivitySession.libp2p(
+            node: server,
+            capabilities: [.libp2pInterop, .inboundListening, .messageSend, .streamMultiplexing]
+        )
+        let clientSession = PeerConnectivitySession.libp2p(node: client)
+        var serverEvents = serverSession.subscribe().makeAsyncIterator()
+
+        try await serverSession.start()
+        try await clientSession.start()
+
+        let serverPeer = try await clientSession.connect(to: .libp2p(serverAddress.description))
+
+        // Open the message protocol directly and write a malformed length-prefixed
+        // frame: a varint length claiming 100 bytes followed by only 5 bytes, then
+        // close. The receiver must reject this as a typed failure rather than
+        // delivering the 5 bytes as a complete message.
+        let channel = try await clientSession.openChannel(
+            to: serverPeer,
+            protocol: "/peer-connectivity/message/1.0.0"
+        )
+        var frame = ByteBuffer()
+        frame.writeInteger(UInt8(100)) // single-byte varint = length 100
+        frame.writeString("short")     // only 5 of the 100 promised bytes
+        try await channel.write(frame)
+        try await channel.close()
+
+        // The next non-trivial event must be an error attributed to inbound
+        // message handling — never a messageReceived carrying the truncated bytes.
+        var sawError = false
+        while let event = await serverEvents.next() {
+            if case .messageReceived = event {
+                Issue.record("truncated frame was delivered as a complete message")
+                break
+            }
+            if case .error(let errorEvent) = event {
+                #expect(errorEvent.operation == .inboundMessage)
+                sawError = true
+                break
+            }
+        }
+        #expect(sawError)
+
+        try await clientSession.shutdown()
+        try await serverSession.shutdown()
+        hub.reset()
+    }
+
+    // MARK: - Inbound handler honors cancellation / released on shutdown (Finding 6)
+
+    @Test(.timeLimit(.minutes(1)))
+    func libp2pInboundHandlerReleasedOnShutdownWhenPeerStalls() async throws {
+        let hub = MemoryHub()
+        let serverAddress = Multiaddr.memory(id: "peer-connectivity-stall")
+        let server = makeLibP2PNode(hub: hub, listenAddress: serverAddress)
+        let client = makeLibP2PNode(hub: hub)
+        let backend = LibP2PPeerConnectivityBackend(
+            node: server,
+            capabilities: [.libp2pInterop, .inboundListening, .messageSend, .streamMultiplexing]
+        )
+        let serverSession = PeerConnectivitySession(backend: backend)
+        let clientSession = PeerConnectivitySession.libp2p(node: client)
+
+        try await serverSession.start()
+        try await clientSession.start()
+
+        let serverPeer = try await clientSession.connect(to: .libp2p(serverAddress.description))
+
+        // Open the message stream but never send a complete frame: the server's
+        // inbound handler blocks on read(). The handler task must be tracked.
+        let channel = try await clientSession.openChannel(
+            to: serverPeer,
+            protocol: "/peer-connectivity/message/1.0.0"
+        )
+        var partial = ByteBuffer()
+        partial.writeInteger(UInt8(50)) // promise 50 bytes, send nothing more
+        try await channel.write(partial)
+
+        // Give the server time to register the inbound handler task.
+        try await Task.sleep(for: .milliseconds(200))
+        let inFlight = await backend.inboundTaskCountForTesting()
+        #expect(inFlight >= 1)
+
+        // shutdown() must cancel the tracked inbound handler so it is released
+        // deterministically rather than pinned by the stalled read.
+        try await serverSession.shutdown()
+        let afterShutdown = await backend.inboundTaskCountForTesting()
+        #expect(afterShutdown == 0)
+
+        try await clientSession.shutdown()
+        hub.reset()
+    }
+
+    // MARK: - enableBonjour capability honesty (Finding 3)
+
+    @Test(.timeLimit(.minutes(1)))
+    func appleNetworkLibP2PRejectsBonjourWithoutListenAddress() throws {
+        do {
+            _ = try PeerConnectivitySession.appleNetworkLibP2P(
+                configuration: AppleNetworkLibP2PConfiguration(
+                    listenAddresses: [],
+                    enableBonjour: true
+                )
+            )
+            Issue.record("appleNetworkLibP2P unexpectedly accepted enableBonjour with no listen address")
+        } catch let error as PeerConnectivityError {
+            guard case .listenAddressRequired = error else {
+                Issue.record("expected listenAddressRequired, got \(error)")
+                return
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func appleNetworkLibP2PAdvertisesBonjourOnlyWithListenAddress() throws {
+        let listenAddress = try Multiaddr("/ip4/127.0.0.1/tcp/0")
+        let session = try PeerConnectivitySession.appleNetworkLibP2P(
+            configuration: AppleNetworkLibP2PConfiguration(
+                listenAddresses: [listenAddress],
+                enableBonjour: true
+            )
+        )
+
+        // With a listen address present, advertising .bonjourDiscovery is honest
+        // (the node can both browse and announce).
+        #expect(session.capabilities.contains(.bonjourDiscovery))
+        #expect(session.capabilities.contains(.inboundListening))
     }
 
     #if canImport(MultipeerConnectivity)
@@ -511,8 +788,8 @@ struct PeerConnectivitySessionTests {
             if case .resourceReceived(let resource, _) = event {
                 return resource
             }
-            if case .error(let error) = event {
-                throw error
+            if case .error(let errorEvent) = event {
+                throw errorEvent.error
             }
         }
         throw PeerConnectivityTestError.streamEnded
@@ -540,14 +817,19 @@ private final class FakePeerConnectivityBackend: PeerConnectivityBackend, PeerCo
         broadcaster.subscribe()
     }
 
+    /// Peer ids whose `send` should throw, to exercise partial-failure paths.
+    private let failingPeerIDs: Set<String>
+
     init(
         capabilities: PeerConnectivityCapabilities,
         local: PeerConnectivityPeer = PeerConnectivityPeer(id: "local", displayName: "Local"),
-        connectedPeers: [PeerConnectivityPeer] = []
+        connectedPeers: [PeerConnectivityPeer] = [],
+        failingPeerIDs: Set<String> = []
     ) {
         self.capabilities = capabilities
         self.local = local
         self.connectedPeerValues = connectedPeers
+        self.failingPeerIDs = failingPeerIDs
     }
 
     func emit(_ event: PeerConnectivityEvent) {
@@ -585,6 +867,9 @@ private final class FakePeerConnectivityBackend: PeerConnectivityBackend, PeerCo
     func disconnect(from peer: PeerConnectivityPeer) async throws {}
 
     func send(_ bytes: ByteBuffer, to peer: PeerConnectivityPeer, mode: PeerSendMode) async throws {
+        if failingPeerIDs.contains(peer.id) {
+            throw PeerConnectivityError.channelClosed
+        }
         sentPeers.withLock { $0.append(peer.id) }
     }
 

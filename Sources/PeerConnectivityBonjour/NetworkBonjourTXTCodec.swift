@@ -28,9 +28,11 @@ public enum NetworkBonjourTXTCodec {
                 }
             }
 
-            if index == 0 {
-                dictionary["dnsaddr"] = addressWithPeer.description
-            }
+            // Use a single indexed key scheme (`dnsaddr.N`). Writing both
+            // `dnsaddr` and `dnsaddr.0` for the first address duplicated it and
+            // wasted scarce TXT-record bytes. The reader accepts both `dnsaddr`
+            // and `dnsaddr.*` keys for interop, so a single indexed scheme is
+            // sufficient and compact.
             dictionary["dnsaddr.\(index)"] = addressWithPeer.description
         }
 

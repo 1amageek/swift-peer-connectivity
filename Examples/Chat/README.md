@@ -27,7 +27,7 @@ message. Press Ctrl+C to disconnect.
 - Auto-invitation with deterministic ordering (only the peer with the smaller
   id sends the invite, so both sides do not invite each other simultaneously).
 - Broadcasting `ByteBuffer` messages with `send(_:to:)`.
-- Consuming `session.events` as an `AsyncStream`.
+- Consuming `session.subscribe()` as an `AsyncStream`.
 
 ## Notes
 

@@ -168,7 +168,7 @@ try await session.require([.nearbyDiscovery, .messageSend])
 try await session.startBrowsing()
 try await session.startAdvertising()
 
-for await event in await session.events {
+for await event in session.subscribe() {
     switch event {
     case .peerDiscovered(let peer, _):
         _ = try await session.join(peer)
@@ -180,6 +180,11 @@ for await event in await session.events {
     }
 }
 ```
+
+`subscribe()` mints a new independent event stream per call (multi-consumer
+broadcaster semantics) and names that per-call cost explicitly, replacing the
+ambiguous `events` computed property that silently created a fresh subscriber on
+each access. Subscribe before `start()` so no early events are missed.
 
 For cross-platform Robot communication, the app should choose a libp2p-compatible backend explicitly:
 
