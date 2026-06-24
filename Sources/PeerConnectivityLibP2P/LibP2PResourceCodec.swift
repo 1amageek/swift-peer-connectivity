@@ -1,6 +1,7 @@
 import Foundation
 import NIOCore
 import PeerConnectivity
+import PeerConnectivityCore
 
 /// Wire framing for resource transfers over a libp2p stream.
 ///
@@ -24,45 +25,37 @@ enum LibP2PResourceCodec {
     /// Maximum bytes accepted for the header frame.
     static let maxHeaderBytes = 16 * 1024
 
-    /// Encodes the header frame payload (`"<name>\0<size>"`).
+    /// Encodes the header frame payload (`"<name>\0<size>\0"`).
     ///
     /// This is the body of the first length-prefixed frame, not including the
-    /// length prefix itself.
+    /// length prefix itself. Byte framing is delegated to the Embedded-clean
+    /// `PeerConnectivityCore.ResourceFrameCodec`; this shim only wraps the
+    /// resulting bytes in a NIO `ByteBuffer` for the muxer write path.
     static func header(for name: String, size: UInt64) -> ByteBuffer {
         var buffer = ByteBuffer()
-        buffer.writeString(name)
-        buffer.writeInteger(UInt8(0))
-        buffer.writeString(String(size))
-        buffer.writeInteger(UInt8(0))
+        buffer.writeBytes(ResourceFrameCodec.encodeHeader(name: name, size: size))
         return buffer
     }
 
-    struct ResourceHeader: Sendable, Equatable {
-        let name: String
-        let size: Int
-    }
+    /// The parsed header of a resource frame.
+    ///
+    /// Re-exported from the Embedded-clean core so the adapter's call sites and
+    /// tests keep referring to `LibP2PResourceCodec.ResourceHeader`.
+    typealias ResourceHeader = ResourceFrameCodec.ResourceHeader
 
     /// Parses a header frame payload, requiring the trailing separator after the
     /// size so a partial header is never accepted.
+    ///
+    /// Delegates byte parsing to the Embedded-clean core and maps its typed
+    /// framing error onto the public `PeerConnectivityError.invalidResource`,
+    /// preserving the adapter's host-facing error surface.
     static func parseHeaderFrame(_ buffer: ByteBuffer) throws -> ResourceHeader {
         let bytes = Array(buffer.readableBytesView)
-        guard let nameEnd = bytes.firstIndex(of: 0), nameEnd > 0 else {
+        do {
+            return try ResourceFrameCodec.decodeHeader(bytes)
+        } catch {
             throw PeerConnectivityError.invalidResource
         }
-        let sizeStart = nameEnd + 1
-        guard sizeStart < bytes.endIndex,
-              let sizeEnd = bytes[sizeStart...].firstIndex(of: 0) else {
-            throw PeerConnectivityError.invalidResource
-        }
-        let sizeBytes = bytes[sizeStart..<sizeEnd]
-        guard !sizeBytes.isEmpty,
-              let sizeString = String(bytes: sizeBytes, encoding: .utf8),
-              let size = Int(sizeString),
-              size >= 0 else {
-            throw PeerConnectivityError.invalidResource
-        }
-        let name = String(decoding: bytes[..<nameEnd], as: UTF8.self)
-        return ResourceHeader(name: name, size: size)
     }
 
     /// Creates the temp file destination directory and a sanitized file URL for
@@ -82,40 +75,17 @@ enum LibP2PResourceCodec {
     /// `destinationURL` and a `FileHandle` instead of buffering in memory.
     static func materializeResource(from buffer: ByteBuffer) throws -> PeerResource {
         let bytes = Array(buffer.readableBytesView)
-        let header = try parseHeaderInline(bytes)
-        let payload = bytes[header.payloadStart...]
-        guard payload.count == header.size else {
+        let materialized: ResourceFrameCodec.MaterializedHeader
+        do {
+            materialized = try ResourceFrameCodec.decodeMaterialized(bytes)
+        } catch {
             throw PeerConnectivityError.invalidResource
         }
-        let name = String(decoding: bytes[..<header.nameEnd], as: UTF8.self)
+        let payload = bytes[materialized.payloadStart...]
+        let name = materialized.header.name
         let fileURL = try destinationURL(for: name)
         try Data(payload).write(to: fileURL, options: .atomic)
         return PeerResource(url: fileURL, name: name)
-    }
-
-    private struct InlineHeader {
-        let nameEnd: Int
-        let payloadStart: Int
-        let size: Int
-    }
-
-    private static func parseHeaderInline(_ bytes: [UInt8]) throws -> InlineHeader {
-        guard let nameEnd = bytes.firstIndex(of: 0), nameEnd > 0 else {
-            throw PeerConnectivityError.invalidResource
-        }
-        let sizeStart = nameEnd + 1
-        guard sizeStart < bytes.endIndex,
-              let sizeEnd = bytes[sizeStart...].firstIndex(of: 0) else {
-            throw PeerConnectivityError.invalidResource
-        }
-        let sizeBytes = bytes[sizeStart..<sizeEnd]
-        guard !sizeBytes.isEmpty,
-              let sizeString = String(bytes: sizeBytes, encoding: .utf8),
-              let size = Int(sizeString),
-              size >= 0 else {
-            throw PeerConnectivityError.invalidResource
-        }
-        return InlineHeader(nameEnd: nameEnd, payloadStart: sizeEnd + 1, size: size)
     }
 
     private static func sanitizedFileName(_ name: String) -> String {

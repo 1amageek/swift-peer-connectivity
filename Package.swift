@@ -2,6 +2,20 @@
 
 import PackageDescription
 
+// Embedded toggle controls the experimental Embedded feature + WMO for the
+// Embedded-clean core(s). Lifetimes is enabled in BOTH modes because the
+// P2PCoreBytes/LibP2PCore dependency surface requires @_lifetime for its
+// Span-returning members. Mirrors the swift-libp2p `embedded` branch wiring.
+let embeddedEnabled = Context.environment["P2P_CORE_EMBEDDED"] == "1"
+
+let coreSettings: [SwiftSetting] = {
+    var s: [SwiftSetting] = [.enableExperimentalFeature("Lifetimes")]
+    if embeddedEnabled {
+        s += [.enableExperimentalFeature("Embedded"), .unsafeFlags(["-wmo"])]
+    }
+    return s
+}()
+
 let package = Package(
     name: "swift-peer-connectivity",
     platforms: [
@@ -12,6 +26,7 @@ let package = Package(
         .visionOS(.v26),
     ],
     products: [
+        .library(name: "PeerConnectivityCore", targets: ["PeerConnectivityCore"]),
         .library(name: "PeerConnectivity", targets: ["PeerConnectivity"]),
         .library(name: "PeerConnectivityLibP2P", targets: ["PeerConnectivityLibP2P"]),
         .library(name: "PeerConnectivityMultipeer", targets: ["PeerConnectivityMultipeer"]),
@@ -19,11 +34,30 @@ let package = Package(
         .library(name: "PeerConnectivityBonjour", targets: ["PeerConnectivityBonjour"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.2.0"),
+        // `embedded`-branch only: resolve swift-libp2p against the local working
+        // tree (its `embedded` branch) so this package builds against the
+        // Embedded-clean libp2p cores under development. This matches the
+        // established cross-package wiring on the `embedded` branch.
+        // RESTORE the URL ref (`from: "0.2.0"`) before release — a local-path ref
+        // must never be tagged, or downstream dependency resolution fails.
+        .package(path: "../swift-libp2p"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.91.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.8.0"),
     ],
     targets: [
+        // Embedded-clean value-type wire codec (dual-build: host + Embedded).
+        // No Foundation, no NIO, no `any`, no Mutex/ContinuousClock/key paths.
+        // Owns the resource-transfer header framing (`"<name>\0<size>\0"`) over
+        // `[UInt8]`; the async stream loop / file I/O / chunk transfer stay in
+        // the `PeerConnectivityLibP2P` adapter. Depends on the libp2p
+        // Embedded-clean core for `decodeUTF8Strict`.
+        .target(
+            name: "PeerConnectivityCore",
+            dependencies: [
+                .product(name: "LibP2PCore", package: "swift-libp2p"),
+            ],
+            swiftSettings: coreSettings
+        ),
         .target(
             name: "PeerConnectivity",
             dependencies: [
@@ -34,6 +68,7 @@ let package = Package(
             name: "PeerConnectivityLibP2P",
             dependencies: [
                 "PeerConnectivity",
+                "PeerConnectivityCore",
                 "PeerConnectivityNetwork",
                 "PeerConnectivityBonjour",
                 .product(name: "P2P", package: "swift-libp2p"),
