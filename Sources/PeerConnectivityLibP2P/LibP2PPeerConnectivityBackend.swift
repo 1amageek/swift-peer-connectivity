@@ -74,8 +74,19 @@ public actor LibP2PPeerConnectivityBackend: PeerConnectivityBackend, PeerConnect
         }
         await node.handle(resourceProtocolID) { [eventBroadcaster] context in
             await Self.runInboundHandler(registry: inboundTasks) {
-                await resourceSemaphore.withPermit {
-                    await Self.handleResourceStream(context: context, eventBroadcaster: eventBroadcaster)
+                do {
+                    try await resourceSemaphore.withPermit {
+                        await Self.handleResourceStream(context: context, eventBroadcaster: eventBroadcaster)
+                    }
+                } catch {
+                    // The only error `withPermit` throws is `CancellationError`,
+                    // raised when this task was cancelled while queued for a
+                    // permit (backend shutdown). The handler body never ran, so
+                    // its stream was never closed — release it here so the muxer
+                    // drops the stream entry, then unwind quietly. Cancellation
+                    // is propagated as a deliberate teardown, not swallowed as a
+                    // successful transfer.
+                    await Self.closeReportingFailure(context.stream, label: "inbound resource stream (cancelled while queued)")
                 }
             }
         }
@@ -567,37 +578,84 @@ actor InboundTaskRegistry {
 ///
 /// Implemented with an actor so acquiring suspends (never blocks a thread) when
 /// no permits are available.
+///
+/// Cancellation discipline mirrors `SWIMCluster.resolveProbe`: each suspended
+/// waiter is keyed by a unique, monotonically increasing id, and its
+/// continuation is resumed exactly once — by EITHER `release()` (success) OR
+/// `cancelWaiter` (`CancellationError`), whichever first removes it from
+/// `waiters`. The losing path finds the id absent and does nothing. Because the
+/// actor serializes every access, this membership check is the exactly-once
+/// guard and the two paths cannot race.
 actor AsyncSemaphore {
     private var permits: Int
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(id: UInt64, continuation: CheckedContinuation<Void, Error>)] = []
+    private var nextWaiterID: UInt64 = 0
 
     init(value: Int) {
         self.permits = value
     }
 
-    private func acquire() async {
+    /// Suspends until a permit is available or the calling task is cancelled.
+    ///
+    /// Throws `CancellationError` if the task is cancelled while queued (or was
+    /// already cancelled on entry to the suspension); in that case NO permit is
+    /// taken, so the caller must NOT release one.
+    private func acquire() async throws {
         if permits > 0 {
             permits -= 1
             return
         }
-        await withCheckedContinuation { continuation in
-            waiters.append(continuation)
+        let id = nextWaiterID
+        nextWaiterID += 1
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    // Already cancelled before we parked: resume immediately and
+                    // never enter `waiters`, so `cancelWaiter`/`release` find
+                    // nothing to resume.
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    waiters.append((id: id, continuation: continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
         }
     }
 
+    /// Removes and fails the queued waiter `id` with `CancellationError`, exactly
+    /// once. If the id is absent (already resumed by `release()`), this is a
+    /// no-op — membership in `waiters` is the exactly-once guard.
+    private func cancelWaiter(_ id: UInt64) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    /// Releases one permit, waking the oldest queued waiter (if any) with
+    /// success. The woken waiter is removed by the same membership rule that
+    /// `cancelWaiter` honors, so a concurrently cancelled waiter is never woken
+    /// in its place.
     private func release() {
         if let next = waiters.first {
             waiters.removeFirst()
-            next.resume()
+            next.continuation.resume(returning: ())
         } else {
             permits += 1
         }
     }
 
-    func withPermit(_ body: @Sendable () async -> Void) async {
-        await acquire()
+    /// Runs `body` while holding one permit, releasing it exactly once afterward.
+    ///
+    /// Throws `CancellationError` if the task is cancelled while queued for a
+    /// permit. In that case `acquire()` threw before `defer` was registered, so
+    /// no permit is released — there is none to release.
+    func withPermit(_ body: @Sendable () async -> Void) async throws {
+        try await acquire()
+        defer { release() }
         await body()
-        release()
     }
 }
 
