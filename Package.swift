@@ -56,6 +56,7 @@ let package = Package(
             dependencies: [
                 .product(name: "LibP2PCore", package: "swift-libp2p"),
             ],
+            exclude: ["CONTEXT.md"],
             swiftSettings: coreSettings
         ),
         .target(
