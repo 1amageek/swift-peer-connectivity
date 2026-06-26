@@ -1,10 +1,8 @@
-import LibP2PCore
-
 /// Resource-transfer header framing for PeerConnectivity (Embedded-clean).
 ///
 /// Embedded-clean: no Foundation, no NIO, no `any`, no Mutex, no
-/// ContinuousClock, no key paths. Operates over `[UInt8]` and uses
-/// `LibP2PCore.decodeUTF8Strict` for strict UTF-8 decoding of the size token.
+/// ContinuousClock, no key paths. Operates over `[UInt8]` without pulling in
+/// the host libp2p facade.
 ///
 /// A resource is sent over a libp2p stream as a sequence of length-prefixed
 /// frames (the length prefix is owned by the muxer's
@@ -68,7 +66,7 @@ public enum ResourceFrameCodec {
     /// - Throws: `ResourceFrameError` describing the specific framing failure.
     public static func decodeHeader(_ bytes: [UInt8]) throws(ResourceFrameError) -> ResourceHeader {
         let layout = try parseHeaderLayout(bytes)
-        let name = lossyUTF8(Array(bytes[0..<layout.nameEnd]))
+        let name = lossyUTF8(bytes[0..<layout.nameEnd])
         return ResourceHeader(name: name, size: layout.size)
     }
 
@@ -103,7 +101,7 @@ public enum ResourceFrameCodec {
         guard availablePayload == layout.size else {
             throw .payloadSizeMismatch(declared: layout.size, available: availablePayload)
         }
-        let name = lossyUTF8(Array(bytes[0..<layout.nameEnd]))
+        let name = lossyUTF8(bytes[0..<layout.nameEnd])
         return MaterializedHeader(
             header: ResourceHeader(name: name, size: layout.size),
             payloadStart: layout.payloadStart
@@ -127,12 +125,10 @@ public enum ResourceFrameCodec {
               let sizeEnd = firstIndex(of: separator, in: bytes, from: sizeStart) else {
             throw .missingSizeSeparator
         }
-        let sizeBytes = Array(bytes[sizeStart..<sizeEnd])
-        guard !sizeBytes.isEmpty else {
+        guard sizeStart < sizeEnd else {
             throw .emptySize
         }
-        guard let sizeString = decodeSizeToken(sizeBytes),
-              let size = parseNonNegativeInt(sizeString) else {
+        guard let size = parseNonNegativeInt(bytes, start: sizeStart, end: sizeEnd) else {
             throw .invalidSize
         }
         return HeaderLayout(nameEnd: nameEnd, payloadStart: sizeEnd + 1, size: size)
@@ -149,23 +145,21 @@ public enum ResourceFrameCodec {
         return nil
     }
 
-    private static func decodeSizeToken(_ bytes: [UInt8]) -> String? {
-        // Strict UTF-8: a non-numeric / malformed size token is a framing error,
-        // never substituted. Reuses the Embedded-clean helper from LibP2PCore.
-        decodeUTF8Strict(bytes)
-    }
-
-    /// Parses a non-negative base-10 integer from `string`, rejecting any
+    /// Parses a non-negative base-10 integer from ASCII bytes, rejecting any
     /// non-digit character, leading sign, or overflow. Returns `nil` on failure.
-    private static func parseNonNegativeInt(_ string: String) -> Int? {
+    private static func parseNonNegativeInt(
+        _ bytes: [UInt8],
+        start: Int,
+        end: Int
+    ) -> Int? {
         var value = 0
-        var sawDigit = false
-        for scalar in string.unicodeScalars {
-            guard scalar.value >= 48, scalar.value <= 57 else {
+        var index = start
+        while index < end {
+            let byte = bytes[index]
+            guard byte >= 48, byte <= 57 else {
                 return nil
             }
-            sawDigit = true
-            let digit = Int(scalar.value - 48)
+            let digit = Int(byte - 48)
             let (multiplied, overflowMul) = value.multipliedReportingOverflow(by: 10)
             guard !overflowMul else {
                 return nil
@@ -175,14 +169,12 @@ public enum ResourceFrameCodec {
                 return nil
             }
             value = added
-        }
-        guard sawDigit else {
-            return nil
+            index += 1
         }
         return value
     }
 
-    private static func lossyUTF8(_ bytes: [UInt8]) -> String {
+    private static func lossyUTF8<Bytes: Collection>(_ bytes: Bytes) -> String where Bytes.Element == UInt8 {
         String(decoding: bytes, as: UTF8.self)
     }
 }

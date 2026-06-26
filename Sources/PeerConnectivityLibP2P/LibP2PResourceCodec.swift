@@ -9,7 +9,7 @@ import PeerConnectivityCore
 /// payload), using the muxer's `read/writeLengthPrefixedMessage` helpers:
 ///
 /// ```
-/// [frame] header   : "<name>\0<size>"   (size is the decimal payload byte count)
+/// [frame] header   : "<name>\0<size>\0" (size is the decimal payload byte count)
 /// [frame] chunk     : raw payload bytes (one or more frames)
 /// [frame] chunk     : ...
 /// ```

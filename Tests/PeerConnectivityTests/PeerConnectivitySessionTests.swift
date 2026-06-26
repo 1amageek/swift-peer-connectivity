@@ -467,6 +467,22 @@ struct PeerConnectivitySessionTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func libp2pResourceCodecRejectsNonDecimalSize() throws {
+        var frame = ByteBuffer()
+        frame.writeString("payload.txt")
+        frame.writeInteger(UInt8(0))
+        frame.writeBytes([0xC3, 0x28])
+        frame.writeInteger(UInt8(0))
+
+        do {
+            _ = try LibP2PResourceCodec.parseHeaderFrame(frame)
+            Issue.record("header parse unexpectedly accepted a non-decimal size field")
+        } catch let error as PeerConnectivityError {
+            #expect(error == .invalidResource)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func libp2pBackendEmitsReceivedResources() async throws {
         let hub = MemoryHub()
         let serverAddress = Multiaddr.memory(id: "peer-connectivity-resource")

@@ -34,13 +34,7 @@ let package = Package(
         .library(name: "PeerConnectivityBonjour", targets: ["PeerConnectivityBonjour"]),
     ],
     dependencies: [
-        // `embedded`-branch only: resolve swift-libp2p against the local working
-        // tree (its `embedded` branch) so this package builds against the
-        // Embedded-clean libp2p cores under development. This matches the
-        // established cross-package wiring on the `embedded` branch.
-        // RESTORE the URL ref (`from: "0.2.0"`) before release — a local-path ref
-        // must never be tagged, or downstream dependency resolution fails.
-        .package(path: "../swift-libp2p"),
+        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.2.1"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.91.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.8.0"),
     ],
@@ -49,13 +43,10 @@ let package = Package(
         // No Foundation, no NIO, no `any`, no Mutex/ContinuousClock/key paths.
         // Owns the resource-transfer header framing (`"<name>\0<size>\0"`) over
         // `[UInt8]`; the async stream loop / file I/O / chunk transfer stay in
-        // the `PeerConnectivityLibP2P` adapter. Depends on the libp2p
-        // Embedded-clean core for `decodeUTF8Strict`.
+        // the `PeerConnectivityLibP2P` adapter.
         .target(
             name: "PeerConnectivityCore",
-            dependencies: [
-                .product(name: "LibP2PCore", package: "swift-libp2p"),
-            ],
+            dependencies: [],
             exclude: ["CONTEXT.md"],
             swiftSettings: coreSettings
         ),

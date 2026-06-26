@@ -23,18 +23,19 @@ can never be accepted as a complete header.
 - The trailing NUL after `<size>` is REQUIRED: a header missing it is rejected
   (`missingSizeSeparator`), so a truncated header is never accepted as complete.
 - The name is decoded lossy (U+FFFD substitution) — a malformed name never
-  fails the transfer; the size token is decoded strictly (`decodeUTF8Strict`)
-  and parsed as a non-negative base-10 integer, rejecting any non-digit,
-  leading sign, empty token, or overflow (`invalidSize` / `emptySize`).
+  fails the transfer; the size token is parsed directly as ASCII decimal,
+  rejecting any non-digit, leading sign, empty token, or overflow
+  (`invalidSize` / `emptySize`).
 - An empty name is rejected (`missingNameSeparator` requires `nameEnd > 0`).
 - `decodeMaterialized` additionally requires the remaining payload length to
   equal the declared size, failing closed with `payloadSizeMismatch` — sizes
   are never trusted to match silently.
 
 ## Embedded constraints (do not regress)
-- No Foundation, no NIO, no `any`, no `Mutex`, no `ContinuousClock`, no key
-  paths. UTF-8 decoding reuses `LibP2PCore.decodeUTF8Strict`. This module is
-  part of the dual-build (host + Embedded) Embedded-clean core.
+- No Foundation, no NIO, no libp2p dependency, no `any`, no `Mutex`, no
+  `ContinuousClock`, no key paths. Size parsing is ASCII-decimal directly over
+  bytes, and malformed/non-digit bytes fail closed as `invalidSize`. This module
+  is part of the dual-build (host + Embedded) Embedded-clean core.
 
 ## Wire protocol notes
 - Header body: `"<name>\0<size>\0"`. `<size>` is the exact payload byte count
