@@ -1,5 +1,5 @@
 {
-  "originHash" : "93f761dd9079ffe7ebbef0ad0beeff74bace2f9a1d8daa44bfa480e3f6ae49f3",
+  "originHash" : "aa99e488dbfa8a4d57a5c6feda5404baf6aaab078c8db9a30a222388fa5a5ca0",
   "pins" : [
     {
       "identity" : "swift-asn1",
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-libp2p.git",
       "state" : {
-        "revision" : "71f7cc3bbdbc4b03c2619095a0881c28015440bb",
-        "version" : "0.2.2"
+        "revision" : "9b033cff0ee26f4a9f345888684489e9e1d3f1be",
+        "version" : "0.2.3"
       }
     },
     {
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-SWIM.git",
       "state" : {
-        "revision" : "c835ce74cffae0767c602185527db1b536e0f34b",
-        "version" : "1.2.2"
+        "revision" : "b01ec36f89bc10c6209a869fba68389ebe4c71c3",
+        "version" : "1.2.3"
       }
     },
     {
@@ -159,8 +159,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-webrtc.git",
       "state" : {
-        "revision" : "181e979c234f33a249b2e3eeb1867235588b56ad",
-        "version" : "1.5.1"
+        "revision" : "109d466b6e4bad4bc5413282f85bd833f49b12e1",
+        "version" : "1.5.2"
       }
     }
   ],

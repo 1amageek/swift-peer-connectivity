@@ -34,7 +34,7 @@ let package = Package(
         .library(name: "PeerConnectivityBonjour", targets: ["PeerConnectivityBonjour"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.2.2"),
+        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.2.3"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.91.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.8.0"),
     ],

@@ -2,7 +2,9 @@
 
 `PeerConnectivity` is the app-facing API for nearby peer discovery, invitations, and session communication. The primary API follows the shape of Multipeer Connectivity: browse, advertise, invite, then send messages, streams, or resources. Backend details such as libp2p transports, multiaddrs, and wire compatibility remain available, but they are not the first thing app code needs to learn.
 
-> **Release status.** The released `0.2.0` ships the prior API. The Embedded-first API documented here lives on the unreleased `embedded` branch (M8 pending) and is not tagged — pin to the branch to use it.
+> **Release status.** The released `0.2.3` ships this API. Embedded support is the
+> `PeerConnectivityCore` wire-codec contract; platform/session adapters remain
+> host or Apple-platform integration layers by design.
 
 ## Features
 
@@ -19,14 +21,14 @@ The API should stay simple enough for application code to use without learning l
 
 - Swift 6.2+ (tools version `6.2`)
 - macOS 26+ / iOS 26+ / tvOS 26+ / watchOS 26+ / visionOS 26+
-- The libp2p backends require swift-libp2p 0.2.0.
+- The libp2p backends require swift-libp2p 0.2.3.
 
 ## Installation
 
 Add the package to your `Package.swift` dependencies:
 
 ```swift
-.package(url: "https://github.com/1amageek/swift-peer-connectivity.git", from: "0.2.0")
+.package(url: "https://github.com/1amageek/swift-peer-connectivity.git", from: "0.2.3")
 ```
 
 ## Quick Start
@@ -74,6 +76,12 @@ for await event in session.subscribe() {
 | `PeerConnectivityNetwork` | `Network.framework` as a TCP libp2p transport on Apple platforms |
 | `PeerConnectivityBonjour` | `NWBrowser` and Bonjour TXT `dnsaddr` records |
 | `PeerConnectivityMultipeer` | `MultipeerConnectivity` for Apple nearby peers |
+
+`PeerConnectivityCore` is the Embedded target. `PeerConnectivity`,
+`PeerConnectivityLibP2P`, `PeerConnectivityNetwork`, `PeerConnectivityBonjour`, and
+`PeerConnectivityMultipeer` own app-facing async orchestration, platform APIs, file
+I/O, Network.framework, MultipeerConnectivity, or host libp2p adapters and are not
+part of the Embedded contract.
 
 ### Factory entry points
 
