@@ -146,9 +146,9 @@
       }
     },
     {
-      "identity" : "swift-tls",
+      "identity" : "swift-tls-sessions",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1amageek/swift-tls.git",
+      "location" : "https://github.com/1amageek/swift-tls-sessions.git",
       "state" : {
         "revision" : "66338e560f151014e3bdf038a5c5ed8fe3175a38",
         "version" : "1.3.2"
