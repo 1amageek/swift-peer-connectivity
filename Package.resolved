@@ -124,7 +124,7 @@
       "location" : "https://github.com/1amageek/swift-ssl.git",
       "state" : {
         "branch" : "main",
-        "revision" : "993341bfb3ac612f38002760ed629bee4901c65b"
+        "revision" : "5f5494c67738d1fd7016bb8182b307b4c011d4ab"
       }
     },
     {
@@ -151,7 +151,16 @@
       "location" : "https://github.com/1amageek/swift-tls-sessions.git",
       "state" : {
         "branch" : "main",
-        "revision" : "1e8c3c00ebd9ea30df361145b77ced7ecc136cc1"
+        "revision" : "071308df787a84823a4207ec13cec153a2512041"
+      }
+    },
+    {
+      "identity" : "swift-tls-types",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/swift-tls-types.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "3ee2b58dec7a6bea75bc4bd76e12355fe1cfe3b2"
       }
     },
     {
