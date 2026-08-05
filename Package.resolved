@@ -1,13 +1,13 @@
 {
-  "originHash" : "01e728a2e7b7164d03f5b637fe42f8ab6de5dbbed3c44eb326633006ff4a0396",
+  "originHash" : "3321362a1db055e517c6b4987e110ca62e090152fbab896f8327ec65aaf16b46",
   "pins" : [
     {
       "identity" : "swift-asn1",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-asn1.git",
+      "location" : "https://github.com/1amageek/swift-asn1.git",
       "state" : {
-        "revision" : "a9a5efd40eaf558a2bcd48d64b1d1646be686008",
-        "version" : "1.7.1"
+        "branch" : "main",
+        "revision" : "6123faa9468df4c914efd3991ef2fde7aec472db"
       }
     },
     {
@@ -22,10 +22,10 @@
     {
       "identity" : "swift-certificates",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-certificates.git",
+      "location" : "https://github.com/1amageek/swift-certificates.git",
       "state" : {
-        "revision" : "eaa10d47d19919979dd8df22ff4fd6349b1108d4",
-        "version" : "1.19.2"
+        "branch" : "main",
+        "revision" : "c0313aa5e984d913062b3e4230468683509ccaf6"
       }
     },
     {
@@ -40,10 +40,10 @@
     {
       "identity" : "swift-crypto",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-crypto.git",
+      "location" : "https://github.com/1amageek/swift-crypto.git",
       "state" : {
-        "revision" : "1b6b2e274e85105bfa155183145a1dcfd63331f1",
-        "version" : "4.5.0"
+        "branch" : "main",
+        "revision" : "469aab1498f38897e9f63ecda5ef80199226ea4a"
       }
     },
     {
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-libp2p.git",
       "state" : {
-        "revision" : "58e8a6572c1c01bea032233c9542f6fe27439e63",
-        "version" : "0.2.5"
+        "branch" : "main",
+        "revision" : "9e815c85eadf8d6e05d814c06755e940a509bac3"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-mDNS.git",
       "state" : {
-        "revision" : "bf249f1844cd7d86151d5898bbc19c488e1c82a6",
-        "version" : "1.3.1"
+        "branch" : "main",
+        "revision" : "5c49c3ae4815225a2cbf61d2f563087b6afd917a"
       }
     },
     {
@@ -105,17 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-p2p-core.git",
       "state" : {
-        "revision" : "52950d52a8c1beca3dbb0b892c2676ee1acad0c6",
-        "version" : "0.2.1"
-      }
-    },
-    {
-      "identity" : "swift-p2p-crypto",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1amageek/swift-p2p-crypto.git",
-      "state" : {
-        "revision" : "08919ce5e0c044d940857fd62c96d3aa98b24f4d",
-        "version" : "0.1.1"
+        "branch" : "main",
+        "revision" : "360e80c42669e1d8ae624c291a4cfcd81fcf27bb"
       }
     },
     {
@@ -123,8 +114,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-quic.git",
       "state" : {
-        "revision" : "4066ba7df79f040e84c148ee7dffc3ec5f5c6aa9",
-        "version" : "1.3.3"
+        "branch" : "main",
+        "revision" : "0ae008aa9ba36429d23b66e3cd9924acf2852588"
+      }
+    },
+    {
+      "identity" : "swift-ssl",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/swift-ssl.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "993341bfb3ac612f38002760ed629bee4901c65b"
       }
     },
     {
@@ -150,8 +150,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-tls-sessions.git",
       "state" : {
-        "revision" : "66338e560f151014e3bdf038a5c5ed8fe3175a38",
-        "version" : "1.3.2"
+        "branch" : "main",
+        "revision" : "1e8c3c00ebd9ea30df361145b77ced7ecc136cc1"
       }
     },
     {
@@ -159,8 +159,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-webrtc.git",
       "state" : {
-        "revision" : "391fcc3af13563b5a30d4dd3db5cac779c89bfbd",
-        "version" : "1.5.3"
+        "branch" : "main",
+        "revision" : "b304262e213c5c98e04941a37480a8a0555ce0a3"
       }
     }
   ],
