@@ -52,7 +52,7 @@
       "location" : "https://github.com/1amageek/swift-libp2p.git",
       "state" : {
         "branch" : "main",
-        "revision" : "4ff254b7868f3e78319aa7f106e4291c8653f546"
+        "revision" : "b973f3e53b7b2692084ce49a4ab50de188eb3828"
       }
     },
     {
@@ -124,7 +124,7 @@
       "location" : "https://github.com/1amageek/swift-ssl.git",
       "state" : {
         "branch" : "main",
-        "revision" : "5f5494c67738d1fd7016bb8182b307b4c011d4ab"
+        "revision" : "43e1a6b1db4e60dd217d7b243fbc33171a2e0d10"
       }
     },
     {
@@ -160,7 +160,7 @@
       "location" : "https://github.com/1amageek/swift-tls-types.git",
       "state" : {
         "branch" : "main",
-        "revision" : "3ee2b58dec7a6bea75bc4bd76e12355fe1cfe3b2"
+        "revision" : "d543b43738609c593285aa922e9650a04d355e88"
       }
     },
     {
