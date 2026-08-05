@@ -4,10 +4,10 @@
     {
       "identity" : "swift-asn1",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-asn1.git",
+      "location" : "https://github.com/1amageek/swift-asn1.git",
       "state" : {
-        "revision" : "eb50cbd14606a9161cbc5d452f18797c90ef0bab",
-        "version" : "1.7.0"
+        "branch" : "main",
+        "revision" : "6123faa9468df4c914efd3991ef2fde7aec472db"
       }
     },
     {
@@ -15,17 +15,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-atomics.git",
       "state" : {
-        "revision" : "b601256eab081c0f92f059e12818ac1d4f178ff7",
-        "version" : "1.3.0"
+        "revision" : "0442cb5a3f98ab802acb777929fdb446bda11a34",
+        "version" : "1.3.1"
       }
     },
     {
       "identity" : "swift-certificates",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-certificates.git",
+      "location" : "https://github.com/1amageek/swift-certificates.git",
       "state" : {
-        "revision" : "bde8ca32a096825dfce37467137c903418c1893d",
-        "version" : "1.19.1"
+        "branch" : "main",
+        "revision" : "c0313aa5e984d913062b3e4230468683509ccaf6"
       }
     },
     {
@@ -33,17 +33,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-collections.git",
       "state" : {
-        "revision" : "6675bc0ff86e61436e615df6fc5174e043e57924",
-        "version" : "1.4.1"
+        "revision" : "a0cb0954ecb21e4e31b0070e6ed5674e8556685a",
+        "version" : "1.6.0"
       }
     },
     {
       "identity" : "swift-crypto",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-crypto.git",
+      "location" : "https://github.com/1amageek/swift-crypto.git",
       "state" : {
-        "revision" : "1b6b2e274e85105bfa155183145a1dcfd63331f1",
-        "version" : "4.5.0"
+        "branch" : "main",
+        "revision" : "469aab1498f38897e9f63ecda5ef80199226ea4a"
       }
     },
     {
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-libp2p.git",
       "state" : {
-        "revision" : "faec9c485b541641c61b9ab4af40f91a01a7d200",
-        "version" : "0.1.3"
+        "branch" : "main",
+        "revision" : "4ff254b7868f3e78319aa7f106e4291c8653f546"
       }
     },
     {
@@ -60,8 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
-        "revision" : "5073617dac96330a486245e4c0179cb0a6fd2256",
-        "version" : "1.12.0"
+        "revision" : "a878e7f8f46cfc0e1125e565b5c08e7d5272dc9a",
+        "version" : "1.14.0"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-mDNS.git",
       "state" : {
-        "revision" : "12ff79711fbffcad5e525bec625dac6bcaa10618",
-        "version" : "1.1.2"
+        "branch" : "main",
+        "revision" : "5c49c3ae4815225a2cbf61d2f563087b6afd917a"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
-        "revision" : "f71c8d2a5e74a2c6d11a0fbe324774b5d6084237",
-        "version" : "2.99.0"
+        "revision" : "0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b",
+        "version" : "2.101.3"
       }
     },
     {
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-ssl.git",
       "state" : {
-        "revision" : "3f337058ccd7243c4cac7911477d8ad4c598d4da",
-        "version" : "2.37.0"
+        "revision" : "d930168b86f46ca51a4bc09c5ca45c1833db8067",
+        "version" : "2.37.2"
       }
     },
     {
@@ -96,8 +96,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-nio-udp.git",
       "state" : {
-        "revision" : "39303781856668e8ceb22b82d6dc305f7f7c048e",
-        "version" : "1.1.1"
+        "revision" : "34be3b34a536815d4dd04fb01a4a8291e7a759f2",
+        "version" : "1.1.4"
+      }
+    },
+    {
+      "identity" : "swift-p2p-core",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/swift-p2p-core.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "360e80c42669e1d8ae624c291a4cfcd81fcf27bb"
       }
     },
     {
@@ -105,8 +114,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-quic.git",
       "state" : {
-        "revision" : "923e2f933cbb54adec55e20cadd425fd07513bc5",
-        "version" : "1.1.3"
+        "branch" : "main",
+        "revision" : "dc290fb88c49e7005dcaee254987ec1420906f99"
+      }
+    },
+    {
+      "identity" : "swift-ssl",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/swift-ssl.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "5f5494c67738d1fd7016bb8182b307b4c011d4ab"
       }
     },
     {
@@ -114,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-SWIM.git",
       "state" : {
-        "revision" : "89025aeccaa97a3b4eed0437b1bee4fd34608574",
-        "version" : "1.1.1"
+        "revision" : "6778b2abba958804c7d831290ec4d9a49c629f7d",
+        "version" : "1.2.4"
       }
     },
     {
@@ -123,17 +141,26 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-system.git",
       "state" : {
-        "revision" : "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
-        "version" : "1.6.4"
+        "revision" : "704705c5c51156ede21172a38654d522ce487074",
+        "version" : "1.8.0"
       }
     },
     {
-      "identity" : "swift-tls-sessions",
+      "identity" : "swift-tls",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1amageek/swift-tls-sessions.git",
+      "location" : "https://github.com/1amageek/swift-tls.git",
       "state" : {
-        "revision" : "d726f2dc259d418b9af91d50568c650f1703ebc1",
-        "version" : "1.1.1"
+        "branch" : "main",
+        "revision" : "2c14a379720325974f0c6f7e60aed1289c0bd049"
+      }
+    },
+    {
+      "identity" : "swift-tls-types",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/swift-tls-types.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "3ee2b58dec7a6bea75bc4bd76e12355fe1cfe3b2"
       }
     },
     {
@@ -141,8 +168,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/swift-webrtc.git",
       "state" : {
-        "revision" : "fbc125f04033151ad01cbae6051e81dbe097cfd0",
-        "version" : "1.1.2"
+        "branch" : "main",
+        "revision" : "630159285a3bff9aa241042762c4821e21ba1787"
       }
     }
   ],
