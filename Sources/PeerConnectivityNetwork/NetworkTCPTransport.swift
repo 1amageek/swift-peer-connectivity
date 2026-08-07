@@ -8,7 +8,7 @@ import Synchronization
 @preconcurrency import Network
 #endif
 
-public final class NetworkTCPTransport: Transport, Sendable {
+public final class NetworkTCPTransport: ByteTransport, Sendable {
     public var protocols: [[String]] {
         [["ip4", "tcp"], ["ip6", "tcp"], ["dns4", "tcp"], ["dns6", "tcp"], ["dns", "tcp"]]
     }
@@ -28,7 +28,7 @@ public final class NetworkTCPTransport: Transport, Sendable {
         #endif
     }
 
-    public func listen(_ address: Multiaddr) async throws -> any Listener {
+    public func listen(_ address: Multiaddr) async throws -> any ByteListener {
         #if canImport(Network)
         guard let port = address.tcpPort else {
             throw TransportError.unsupportedAddress(address)
@@ -260,7 +260,7 @@ public final class NetworkTCPConnection: RawConnection, Sendable {
     }
 }
 
-public final class NetworkTCPListener: Listener, Sendable {
+public final class NetworkTCPListener: ByteListener, Sendable {
     private let listener: NWListener
     private let state: Mutex<ListenerState>
 

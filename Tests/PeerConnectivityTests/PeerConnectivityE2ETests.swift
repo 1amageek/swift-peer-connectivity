@@ -116,12 +116,12 @@ struct PeerConnectivityE2ETests {
         let listenAddress = try Multiaddr("/ip4/127.0.0.1/tcp/0")
         let server = try Node(
             listenAddresses: [listenAddress],
-            transports: [NetworkTCPTransport()],
+            byteTransports: [NetworkTCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
         let client = try Node(
-            transports: [TCPTransport()],
+            byteTransports: [TCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
@@ -158,12 +158,12 @@ struct PeerConnectivityE2ETests {
         let listenAddress = try Multiaddr("/ip4/127.0.0.1/tcp/0")
         let server = try Node(
             listenAddresses: [listenAddress],
-            transports: [TCPTransport()],
+            byteTransports: [TCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
         let client = try Node(
-            transports: [NetworkTCPTransport()],
+            byteTransports: [NetworkTCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
@@ -200,12 +200,12 @@ struct PeerConnectivityE2ETests {
         let listenAddress = try Multiaddr("/ip4/127.0.0.1/tcp/0")
         let server = try Node(
             listenAddresses: [listenAddress],
-            transports: [NetworkTCPTransport()],
+            byteTransports: [NetworkTCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
         let client = try Node(
-            transports: [NetworkTCPTransport()],
+            byteTransports: [NetworkTCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
@@ -243,12 +243,12 @@ struct PeerConnectivityE2ETests {
         let listenAddress = try Multiaddr("/ip4/127.0.0.1/tcp/0")
         let server = try Node(
             listenAddresses: [listenAddress],
-            transports: [NetworkTCPTransport()],
+            byteTransports: [NetworkTCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
         let client = try Node(
-            transports: [NetworkTCPTransport()],
+            byteTransports: [NetworkTCPTransport()],
             security: [NoiseUpgrader()],
             muxers: [YamuxMuxer()]
         )
@@ -299,7 +299,7 @@ struct PeerConnectivityE2ETests {
 
         return Node(configuration: NodeConfiguration(
             listenAddresses: listenAddresses,
-            transports: [MemoryTransport(hub: hub)],
+            byteTransports: [MemoryTransport(hub: hub)],
             security: [PlaintextUpgrader()],
             muxers: [YamuxMuxer()],
             pool: .init(

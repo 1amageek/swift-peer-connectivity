@@ -58,7 +58,7 @@ public extension PeerConnectivitySession {
             node = try Node(
                 keyPair: configuration.keyPair,
                 listenAddresses: configuration.listenAddresses,
-                transports: [NetworkTCPTransport()],
+                byteTransports: [NetworkTCPTransport()],
                 security: [NoiseUpgrader()],
                 muxers: [YamuxMuxer()]
             ) {
@@ -74,7 +74,7 @@ public extension PeerConnectivitySession {
             node = try Node(
                 keyPair: configuration.keyPair,
                 listenAddresses: configuration.listenAddresses,
-                transports: [NetworkTCPTransport()],
+                byteTransports: [NetworkTCPTransport()],
                 security: [NoiseUpgrader()],
                 muxers: [YamuxMuxer()]
             )

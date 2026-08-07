@@ -785,7 +785,7 @@ struct PeerConnectivitySessionTests {
 
         return Node(configuration: NodeConfiguration(
             listenAddresses: listenAddresses,
-            transports: [MemoryTransport(hub: hub)],
+            byteTransports: [MemoryTransport(hub: hub)],
             security: [PlaintextUpgrader()],
             muxers: [YamuxMuxer()],
             pool: .init(

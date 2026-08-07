@@ -37,6 +37,7 @@ final class StreamRunLoop: Sendable {
             CFRunLoopRun()
         }
         thread.name = "swift-peer-connectivity.multipeer.stream"
+        thread.qualityOfService = .userInitiated
         thread.stackSize = 512 * 1024
         thread.start()
         ready.wait()

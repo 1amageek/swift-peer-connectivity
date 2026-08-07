@@ -93,7 +93,7 @@ public enum PeerConnectivityOperation: Sendable, Hashable {
 ///
 /// Equality compares only the structured context (operation and peer); the
 /// underlying `error` is not `Equatable`, so it is excluded from `==`.
-public struct PeerConnectivityErrorEvent: Sendable, Equatable {
+public struct PeerConnectivityErrorEvent: Error, Sendable, Equatable {
     public let operation: PeerConnectivityOperation
     public let peer: PeerConnectivityPeer?
     public let error: any Error

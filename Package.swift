@@ -34,9 +34,7 @@ let package = Package(
         .library(name: "PeerConnectivityBonjour", targets: ["PeerConnectivityBonjour"]),
     ],
     dependencies: [
-        // The canonical workspace graph is coordinated on the swift-libp2p main
-        // branch because its Pure Swift crypto dependencies are also branch-pinned.
-        .package(url: "https://github.com/1amageek/swift-libp2p.git", branch: "main"),
+        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.3.1"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.91.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.8.0"),
     ],
