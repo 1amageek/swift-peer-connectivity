@@ -4,9 +4,9 @@ import PackageDescription
 
 // Embedded toggle controls the experimental Embedded feature + WMO for the
 // Embedded-clean core(s). Lifetimes is enabled in BOTH modes because the
-// P2PCoreBytes/LibP2PCore dependency surface requires @_lifetime for its
+// NetworkingCore/LibP2PCore dependency surface requires @_lifetime for its
 // Span-returning members. Matches the released swift-libp2p core wiring.
-let embeddedEnabled = Context.environment["P2P_CORE_EMBEDDED"] == "1"
+let embeddedEnabled = Context.environment["SWIFT_NETWORKING_EMBEDDED"] == "1"
 
 let coreSettings: [SwiftSetting] = {
     var s: [SwiftSetting] = [.enableExperimentalFeature("Lifetimes")]
@@ -34,7 +34,7 @@ let package = Package(
         .library(name: "PeerConnectivityBonjour", targets: ["PeerConnectivityBonjour"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.3.1"),
+        .package(url: "https://github.com/1amageek/swift-libp2p.git", from: "0.5.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.91.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.8.0"),
     ],

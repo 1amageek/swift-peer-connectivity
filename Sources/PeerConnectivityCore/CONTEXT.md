@@ -48,5 +48,5 @@ can never be accepted as a complete header.
 swift build
 
 # Embedded build (matches the embedded-branch wiring)
-P2P_CORE_EMBEDDED=1 swift build --target PeerConnectivityCore -c release
+SWIFT_NETWORKING_EMBEDDED=1 swift build --target PeerConnectivityCore -c release
 ```

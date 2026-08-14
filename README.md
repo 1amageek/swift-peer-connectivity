@@ -2,7 +2,7 @@
 
 `PeerConnectivity` is the app-facing API for nearby peer discovery, invitations, and session communication. The primary API follows the shape of Multipeer Connectivity: browse, advertise, invite, then send messages, streams, or resources. Backend details such as libp2p transports, multiaddrs, and wire compatibility remain available, but they are not the first thing app code needs to learn.
 
-> **Release status.** Current release: `0.2.4`. Embedded support is the
+> **Release status.** Current release: `0.3.0`. Embedded support is the
 > `PeerConnectivityCore` wire-codec contract; platform/session adapters remain
 > host or Apple-platform integration layers by design.
 
@@ -21,14 +21,14 @@ The API should stay simple enough for application code to use without learning l
 
 - Swift 6.2+ (tools version `6.2`)
 - macOS 26+ / iOS 26+ / tvOS 26+ / watchOS 26+ / visionOS 26+
-- The libp2p backends require swift-libp2p 0.2.5.
+- The libp2p backends require swift-libp2p 0.5.0.
 
 ## Installation
 
 Add the package to your `Package.swift` dependencies:
 
 ```swift
-.package(url: "https://github.com/1amageek/swift-peer-connectivity.git", from: "0.2.4")
+.package(url: "https://github.com/1amageek/swift-peer-connectivity.git", from: "0.3.0")
 ```
 
 ## Quick Start
